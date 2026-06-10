@@ -197,8 +197,22 @@ export default function App() {
                       ? "bg-[#81c784]/20 text-[#81c784]" 
                       : "bg-[#ffb74d]/20 text-[#ffb74d]"
                   )}>
-                    {signalData.signal.aiValidation.agrees ? '✓ Agree' : '⚠ Divergent'}
+                    {signalData.signal.aiValidation.combined.agreement === 'BOTH_AGREE' ? '✓ Both Agree' : signalData.signal.aiValidation.agrees ? '✓ Agree' : '⚠ Divergent'}
                   </div>
+                </div>
+                {/* Individual model status */}
+                <div className="flex gap-2 mb-3">
+                  {(['cerebras','groq'] as const).map(model => {
+                    const m = signalData.signal.aiValidation![model];
+                    if (!m) return null;
+                    const ok = m.status === 'OK';
+                    return (
+                      <div key={model} className={cn("flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium", ok ? "bg-[#81c784]/10 text-[#81c784]" : "bg-[#ef5350]/10 text-[#ef5350]")}>
+                        <div className={cn("w-1.5 h-1.5 rounded-full", ok ? "bg-[#81c784]" : "bg-[#ef5350]")} />
+                        {model.charAt(0).toUpperCase() + model.slice(1)} {ok ? `${m.confidence}%` : m.status}
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="grid grid-cols-2 gap-3 mb-3">
                   <div className="bg-[#27272d] rounded-xl p-3">
@@ -215,6 +229,65 @@ export default function App() {
                   </div>
                 </div>
                 <p className="text-sm text-[#c4c6d0] leading-relaxed">{signalData.signal.aiValidation.combined.reason}</p>
+                {signalData.signal.aiValidation.combined.concerns && (
+                  <div className="mt-2 flex items-start gap-2 p-2.5 bg-[#ffb74d]/10 rounded-xl border border-[#ffb74d]/20">
+                    <span className="text-[#ffb74d] text-xs mt-0.5">⚠</span>
+                    <p className="text-xs text-[#ffb74d]/90 leading-relaxed">{signalData.signal.aiValidation.combined.concerns}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Structure Verdict */}
+            {signalData.signal.structureVerdict && signalData.signal.structureVerdict.overall !== 'N/A' && (
+              <div className="md-surface p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-[#0288d1]/20 flex items-center justify-center">
+                      <Layers className="w-4 h-4 text-[#42a5f5]" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium">Market Structure</div>
+                      <div className="text-xs text-[#b0b3b8]">BOS / CHoCH / Bias</div>
+                    </div>
+                  </div>
+                  <div className={cn(
+                    "px-3 py-1 rounded-full text-xs font-bold",
+                    signalData.signal.structureVerdict.overall === 'ALIGNED' && "bg-[#81c784]/20 text-[#81c784]",
+                    signalData.signal.structureVerdict.overall === 'AGAINST' && "bg-[#ef5350]/20 text-[#ef5350]",
+                    signalData.signal.structureVerdict.overall === 'MIXED' && "bg-[#ffb74d]/20 text-[#ffb74d]",
+                    signalData.signal.structureVerdict.overall === 'NEUTRAL' && "bg-[#bdbdbd]/20 text-[#bdbdbd]",
+                  )}>
+                    {signalData.signal.structureVerdict.overall === 'ALIGNED' && '✓ ALIGNED'}
+                    {signalData.signal.structureVerdict.overall === 'AGAINST' && '✗ AGAINST'}
+                    {signalData.signal.structureVerdict.overall === 'MIXED' && '~ MIXED'}
+                    {signalData.signal.structureVerdict.overall === 'NEUTRAL' && '— NEUTRAL'}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {Object.entries(signalData.signal.structureVerdict.perTimeframe).map(([tf, v]) => (
+                    <div key={tf} className={cn(
+                      "flex-1 text-center py-2 rounded-xl text-xs font-medium",
+                      v.verdict === 'AGREE' && "bg-[#81c784]/10 text-[#81c784]",
+                      v.verdict === 'DISAGREE' && "bg-[#ef5350]/10 text-[#ef5350]",
+                      v.verdict === 'NEUTRAL' && "bg-[#27272d] text-[#b0b3b8]",
+                    )}>
+                      <div className="font-bold">{tf.toUpperCase()}</div>
+                      <div className="text-[10px] mt-0.5 opacity-80">{v.bias?.replace('_', ' ')}</div>
+                      <div className="text-[9px] mt-0.5">{v.verdict}</div>
+                    </div>
+                  ))}
+                </div>
+                {signalData.signal.structureVerdict.overall === 'AGAINST' && (
+                  <p className="mt-3 text-xs text-[#ef5350]/80 bg-[#ef5350]/10 rounded-lg p-2.5">
+                    ⚠ Structure is against the signal — consider skipping or wait for structure to align.
+                  </p>
+                )}
+                {signalData.signal.structureVerdict.overall === 'MIXED' && (
+                  <p className="mt-3 text-xs text-[#ffb74d]/80 bg-[#ffb74d]/10 rounded-lg p-2.5">
+                    ~ Mixed structure — trade with caution, check the best timeframe.
+                  </p>
+                )}
               </div>
             )}
 
@@ -288,6 +361,7 @@ export default function App() {
             </div>
             <IndicatorGrid 
               recommendations={signalData.signal.recommendations}
+              timeframeAnalysis={signalData.signal.timeframeAnalysis}
               selectedTF={selectedIndicatorTF}
               onSelectTF={setSelectedIndicatorTF}
             />
@@ -517,9 +591,10 @@ function TimeframeCard({ tf, rec }: { tf: string; rec: TimeframeRec }) {
   );
 }
 
-function IndicatorGrid({ recommendations, selectedTF, onSelectTF }: { recommendations: Record<string, TimeframeRec>; selectedTF: string; onSelectTF: (tf: string) => void }) {
+function IndicatorGrid({ recommendations, timeframeAnalysis, selectedTF, onSelectTF }: { recommendations: Record<string, TimeframeRec>; timeframeAnalysis?: Record<string, any>; selectedTF: string; onSelectTF: (tf: string) => void }) {
   const rec = recommendations[selectedTF];
-  const indicators = (rec as any)?.indicators;
+  // indicators live in timeframeAnalysis, fallback to rec for older responses
+  const indicators = timeframeAnalysis?.[selectedTF]?.indicators || (rec as any)?.indicators;
 
   return (
     <div className="space-y-3">
