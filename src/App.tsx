@@ -38,6 +38,15 @@ interface HistoryEntry {
   timestamp: number;
   result?: 'WIN' | 'LOSS' | 'PENDING';
   grade?: string;
+  // detail fields for history view
+  gradeLabel?: string;
+  structureDirection?: string;
+  structureStrength?: string;
+  structureOverall?: string;
+  expiryMinutes?: number;
+  expiryTime?: number; // ms epoch when this trade expires
+  aiAgree?: boolean;
+  autoChecked?: boolean; // true if result was set by auto win/loss check
 }
 
 type Tab = 'home' | 'analysis' | 'history' | 'settings';
@@ -72,16 +81,26 @@ export default function App() {
 
       const sigKey = `${data.pair}-${data.signal.finalSignal}-${data.signal.bestTimeframe?.timeframe}-${Math.floor(Date.now()/60000)}`;
       if (['BUY', 'SELL'].includes(data.signal.finalSignal)) {
+        const bestTF = data.signal.bestTimeframe?.timeframe || '5min';
+        const rec = data.signal.recommendations?.[bestTF as '5min'];
+        const expiryMinutes = rec?.expiry?.totalMinutes;
         const newEntry: HistoryEntry = {
           id: sigKey,
           pair: data.pair,
           direction: data.signal.finalSignal,
           confidence: data.signal.confidence,
-          timeframe: data.signal.bestTimeframe?.timeframe || '5min',
-          entryPrice: data.signal.recommendations?.[data.signal.bestTimeframe?.timeframe as '5min']?.entry?.price || 0,
+          timeframe: bestTF,
+          entryPrice: rec?.entry?.price || 0,
           timestamp: Date.now(),
           result: 'PENDING',
           grade: data.signal.grade?.grade,
+          gradeLabel: data.signal.grade?.label,
+          structureDirection: data.signal.structureVerdict?.direction,
+          structureStrength: data.signal.structureVerdict?.strength,
+          structureOverall: data.signal.structureVerdict?.overall,
+          expiryMinutes,
+          expiryTime: expiryMinutes ? Date.now() + expiryMinutes * 60000 : undefined,
+          aiAgree: data.signal.aiValidation?.agrees,
         };
         setHistory(prev => {
           if (prev.find(h => h.id === sigKey)) return prev;
@@ -112,6 +131,50 @@ export default function App() {
     setHistory(prev => prev.map(h => h.id === id ? { ...h, result } : h));
     fetch(`${API_BASE}/api/report?id=${id}&result=${result}`).catch(() => {});
   };
+
+  // Auto WIN/LOSS checker: every 30s, check PENDING entries whose expiry has
+  // passed, fetch current price for that pair, and compare vs entry price.
+  useEffect(() => {
+    const checkExpired = async () => {
+      const now = Date.now();
+      const due = history.filter(h =>
+        (!h.result || h.result === 'PENDING') &&
+        h.expiryTime && h.expiryTime <= now
+      );
+      if (due.length === 0) return;
+
+      // Check one at a time to respect API limits
+      const entry = due[0];
+      try {
+        const cleanPair = entry.pair.replace('/', '').toLowerCase();
+        const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`);
+        if (!response.ok) return;
+        const data: SignalData = await response.json();
+        const currentPrice = data.signal?.recommendations?.['1min']?.entry?.price
+          || data.signal?.bestTimeframe?.score
+          || null;
+        if (currentPrice == null || !entry.entryPrice) return;
+
+        const movedUp = currentPrice > entry.entryPrice;
+        const movedDown = currentPrice < entry.entryPrice;
+        let result: 'WIN' | 'LOSS' | undefined;
+        if (entry.direction === 'BUY' && movedUp) result = 'WIN';
+        else if (entry.direction === 'BUY' && movedDown) result = 'LOSS';
+        else if (entry.direction === 'SELL' && movedDown) result = 'WIN';
+        else if (entry.direction === 'SELL' && movedUp) result = 'LOSS';
+
+        if (result) {
+          setHistory(prev => prev.map(h => h.id === entry.id ? { ...h, result, autoChecked: true } : h));
+          fetch(`${API_BASE}/api/report?id=${entry.id}&result=${result}`).catch(() => {});
+        }
+      } catch {
+        // silent — will retry next cycle
+      }
+    };
+
+    const interval = setInterval(checkExpired, 30000);
+    return () => clearInterval(interval);
+  }, [history]);
 
   const pendingCount = history.filter(h => !h.result || h.result === 'PENDING').length;
   const wins = history.filter(h => h.result === 'WIN').length;
@@ -699,6 +762,7 @@ function MiniStat({ label, value, color }: { label: string; value: string | numb
 function HistoryRow({ entry, onReport, isLast }: { entry: HistoryEntry; onReport: (id: string, result: 'WIN' | 'LOSS') => void; isLast: boolean }) {
   const isBuy = entry.direction === 'BUY';
   const isPending = !entry.result || entry.result === 'PENDING';
+  const expiryPassed = entry.expiryTime && entry.expiryTime <= Date.now();
 
   return (
     <div className={cn("p-4", !isLast && "border-b border-[#3a3a3e]")}>
@@ -708,21 +772,75 @@ function HistoryRow({ entry, onReport, isLast }: { entry: HistoryEntry; onReport
             {isBuy ? <ArrowUp className="w-4 h-4 text-[#81c784]" /> : <ArrowDown className="w-4 h-4 text-[#ef5350]" />}
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-medium text-sm">{entry.pair}</span>
               <span className="text-[10px] px-1.5 py-0.5 bg-[#27272d] rounded text-[#b0b3b8]">{entry.timeframe}</span>
+              {entry.grade && (
+                <span className="text-[10px] px-1.5 py-0.5 bg-[#9575cd]/20 text-[#b39ddb] rounded font-bold">
+                  {entry.grade}{entry.gradeLabel ? ` · ${entry.gradeLabel}` : ''}
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-2 mt-0.5 text-xs text-[#6e6e73]">
+            <div className="flex items-center gap-2 mt-0.5 text-xs text-[#6e6e73] flex-wrap">
               <span className="number-tabular">{entry.entryPrice}</span>
               <span>·</span>
               <span>{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               <span>·</span>
               <span>{entry.confidence}</span>
+              {entry.expiryMinutes && (
+                <>
+                  <span>·</span>
+                  <span>exp {entry.expiryMinutes}m</span>
+                </>
+              )}
             </div>
+            {/* Structure verdict line */}
+            {entry.structureDirection && (
+              <div className="flex items-center gap-1.5 mt-1">
+                <span className="text-[9px] text-[#6e6e73]">Structure:</span>
+                <span className={cn(
+                  "text-[9px] font-bold",
+                  entry.structureDirection === 'BUY' && "text-[#81c784]",
+                  entry.structureDirection === 'SELL' && "text-[#ef5350]",
+                  (entry.structureDirection === 'NEUTRAL' || entry.structureDirection === 'MIXED') && "text-[#b0b3b8]",
+                )}>
+                  {entry.structureDirection}{entry.structureStrength && entry.structureStrength !== 'NEUTRAL' ? ` (${entry.structureStrength})` : ''}
+                </span>
+                {entry.structureOverall && entry.structureOverall !== 'N/A' && (
+                  <span className={cn(
+                    "text-[9px] px-1 rounded",
+                    entry.structureOverall === 'ALIGNED' && "bg-[#81c784]/15 text-[#81c784]",
+                    entry.structureOverall === 'AGAINST' && "bg-[#ef5350]/15 text-[#ef5350]",
+                    entry.structureOverall === 'MIXED' && "bg-[#ffb74d]/15 text-[#ffb74d]",
+                    entry.structureOverall === 'NEUTRAL' && "bg-[#bdbdbd]/15 text-[#bdbdbd]",
+                  )}>
+                    {entry.structureOverall}
+                  </span>
+                )}
+                {entry.aiAgree !== undefined && (
+                  <span className={cn("text-[9px]", entry.aiAgree ? "text-[#81c784]" : "text-[#ffb74d]")}>
+                    {entry.aiAgree ? '· AI ✓' : '· AI ⚠'}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
-        {entry.result === 'WIN' && <div className="px-2.5 py-1 rounded-full bg-[#81c784]/20 text-[#81c784] text-xs font-medium flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />WIN</div>}
-        {entry.result === 'LOSS' && <div className="px-2.5 py-1 rounded-full bg-[#ef5350]/20 text-[#ef5350] text-xs font-medium flex items-center gap-1"><XCircle className="w-3 h-3" />LOSS</div>}
+        {entry.result === 'WIN' && (
+          <div className="px-2.5 py-1 rounded-full bg-[#81c784]/20 text-[#81c784] text-xs font-medium flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3" />WIN{entry.autoChecked && <span className="text-[8px] opacity-70">·auto</span>}
+          </div>
+        )}
+        {entry.result === 'LOSS' && (
+          <div className="px-2.5 py-1 rounded-full bg-[#ef5350]/20 text-[#ef5350] text-xs font-medium flex items-center gap-1">
+            <XCircle className="w-3 h-3" />LOSS{entry.autoChecked && <span className="text-[8px] opacity-70">·auto</span>}
+          </div>
+        )}
+        {isPending && entry.expiryMinutes && !expiryPassed && (
+          <div className="px-2.5 py-1 rounded-full bg-[#42a5f5]/15 text-[#42a5f5] text-[10px] font-medium">
+            running
+          </div>
+        )}
       </div>
       {isPending && (
         <div className="flex gap-2 mt-2">

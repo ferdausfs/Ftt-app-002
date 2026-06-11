@@ -19,6 +19,22 @@ const ALL_PAIRS = {
   'OTC': ['EURUSD-OTC', 'GBPUSD-OTC', 'USDJPY-OTC', 'AUDCAD-OTC', 'EURGBP-OTC']
 };
 
+// Normalize free-typed search into a pair format the backend understands.
+// Accepts: "audusd", "AUD/USD", "audusd-otc", "aud usd otc", "BTCUSD"
+function normalizePairInput(raw: string): string {
+  let s = raw.trim().toUpperCase().replace(/\s+/g, '');
+  const isOTC = s.includes('OTC');
+  s = s.replace(/-?OTC/g, '');
+  s = s.replace(/[^A-Z]/g, ''); // strip slashes etc
+
+  if (s.length === 6) {
+    const pair = `${s.slice(0, 3)}/${s.slice(3)}`;
+    return isOTC ? `${pair.replace('/', '')}-OTC` : pair;
+  }
+  // fallback: return as-typed (uppercased, slash-stripped form for OTC, else raw)
+  return isOTC ? `${s}-OTC` : raw.trim().toUpperCase();
+}
+
 export function PairSelector({ isOpen, onClose, selectedPair, onSelect, favorites, onToggleFavorite }: Props) {
   const [search, setSearch] = useState('');
 
@@ -72,6 +88,28 @@ export function PairSelector({ isOpen, onClose, selectedPair, onSelect, favorite
 
         {/* List */}
         <div className="flex-1 overflow-y-auto px-5 pb-8">
+          {/* Custom pair from search — supports any of the 58 backend pairs */}
+          {search.trim().length >= 3 && Object.values(filteredPairs).flat().length === 0 && (
+            <div className="mb-4">
+              <h3 className="text-xs uppercase tracking-wider text-white/40 font-semibold mb-2 px-1">
+                Use Custom Pair
+              </h3>
+              <div className="ios-card rounded-2xl overflow-hidden">
+                <PairItem
+                  pair={normalizePairInput(search)}
+                  isSelected={false}
+                  isFavorite={favorites.includes(normalizePairInput(search))}
+                  isLast={true}
+                  onSelect={() => { haptic('medium'); onSelect(normalizePairInput(search)); onClose(); }}
+                  onToggleFavorite={() => { haptic('light'); onToggleFavorite(normalizePairInput(search)); }}
+                />
+              </div>
+              <p className="text-xs text-white/30 mt-2 px-1">
+                Not in the quick list, but your backend supports 58 pairs — try fetching it directly.
+              </p>
+            </div>
+          )}
+
           {favorites.length > 0 && !search && (
             <div className="mb-4">
               <h3 className="text-xs uppercase tracking-wider text-white/40 font-semibold mb-2 px-1">
