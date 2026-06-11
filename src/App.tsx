@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   RefreshCw, 
   Sparkles, 
@@ -53,7 +53,9 @@ interface HistoryEntry {
 type Tab = 'home' | 'analysis' | 'history' | 'settings';
 
 export default function App() {
-  const [selectedPair, setSelectedPair] = useState('EUR/USD');
+  const [selectedPair, setSelectedPair] = useState(() => {
+    try { return localStorage.getItem('ftt_selected_pair') || 'EUR/USD'; } catch { return 'EUR/USD'; }
+  });
   const [signalData, setSignalData] = useState<SignalData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +75,12 @@ export default function App() {
       return next;
     });
   };
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem('ftt_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [selectedIndicatorTF, setSelectedIndicatorTF] = useState('5min');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -129,7 +136,11 @@ export default function App() {
     }
   }, [selectedPair]);
 
-  useEffect(() => { fetchSignal(); }, [selectedPair]);
+  useEffect(() => {
+    try { localStorage.setItem('ftt_history', JSON.stringify(history)); } catch {}
+  }, [history]);
+
+  useEffect(() => { fetchSignal(); try { localStorage.setItem('ftt_selected_pair', selectedPair); } catch {} }, [selectedPair]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -494,7 +505,7 @@ export default function App() {
                 </div>
               ) : (
                 history.slice(0, 30).map((entry, idx) => (
-                  <HistoryRow key={entry.id} entry={entry} onReport={handleReport} isLast={idx === Math.min(history.length, 30) - 1} />
+                  <HistoryRow key={entry.id} entry={entry} onReport={handleReport} onDelete={(id) => setHistory(prev => prev.filter(h => h.id !== id))} isLast={idx === Math.min(history.length, 30) - 1} />
                 ))
               )}
             </div>
@@ -775,13 +786,49 @@ function MiniStat({ label, value, color }: { label: string; value: string | numb
   );
 }
 
-function HistoryRow({ entry, onReport, isLast }: { entry: HistoryEntry; onReport: (id: string, result: 'WIN' | 'LOSS') => void; isLast: boolean }) {
+function HistoryRow({ entry, onReport, onDelete, isLast }: { entry: HistoryEntry; onReport: (id: string, result: 'WIN' | 'LOSS') => void; onDelete: (id: string) => void; isLast: boolean }) {
   const isBuy = entry.direction === 'BUY';
   const isPending = !entry.result || entry.result === 'PENDING';
   const expiryPassed = entry.expiryTime && entry.expiryTime <= Date.now();
+  const [pressing, setPressing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startPress = () => {
+    setPressing(true);
+    pressTimer.current = setTimeout(() => {
+      setPressing(false);
+      setConfirmDelete(true);
+      if (navigator.vibrate) navigator.vibrate(40);
+    }, 550);
+  };
+  const cancelPress = () => {
+    setPressing(false);
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+  };
+
+  if (confirmDelete) {
+    return (
+      <div className={cn("p-4 flex items-center justify-between gap-3 bg-[#ef5350]/10", !isLast && "border-b border-[#3a3a3e]")}>
+        <span className="text-sm text-[#ef5350] font-medium">Delete {entry.pair} signal?</span>
+        <div className="flex gap-2">
+          <button onClick={() => onDelete(entry.id)} className="px-3 py-1.5 rounded-lg bg-[#ef5350] text-white text-xs font-medium active:scale-95 transition-transform">Delete</button>
+          <button onClick={() => setConfirmDelete(false)} className="px-3 py-1.5 rounded-lg bg-[#27272d] text-[#e3e2e6] text-xs font-medium active:scale-95 transition-transform">Cancel</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={cn("p-4", !isLast && "border-b border-[#3a3a3e]")}>
+    <div
+      className={cn("p-4 transition-colors select-none", !isLast && "border-b border-[#3a3a3e]", pressing && "bg-[#ef5350]/5")}
+      onTouchStart={startPress}
+      onTouchEnd={cancelPress}
+      onTouchMove={cancelPress}
+      onMouseDown={startPress}
+      onMouseUp={cancelPress}
+      onMouseLeave={cancelPress}
+    >
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
           <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", isBuy ? "bg-[#81c784]/15" : "bg-[#ef5350]/15")}>
