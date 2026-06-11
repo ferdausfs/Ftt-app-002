@@ -264,6 +264,28 @@ export default function App() {
                     {signalData.signal.structureVerdict.overall === 'NEUTRAL' && '— NEUTRAL'}
                   </div>
                 </div>
+                {/* Structure's own direction call */}
+                <div className="flex items-center justify-between mb-3 bg-[#27272d] rounded-xl p-3">
+                  <div className="text-xs text-[#b0b3b8]">Structure says</div>
+                  <div className="flex items-center gap-2">
+                    <span className={cn(
+                      "text-sm font-bold",
+                      signalData.signal.structureVerdict.direction === 'BUY' && "text-[#81c784]",
+                      signalData.signal.structureVerdict.direction === 'SELL' && "text-[#ef5350]",
+                      (signalData.signal.structureVerdict.direction === 'NEUTRAL' || signalData.signal.structureVerdict.direction === 'MIXED') && "text-[#bdbdbd]",
+                    )}>
+                      {signalData.signal.structureVerdict.direction}
+                    </span>
+                    {signalData.signal.structureVerdict.strength !== 'NEUTRAL' && (
+                      <span className={cn(
+                        "text-[10px] px-2 py-0.5 rounded-full font-medium",
+                        signalData.signal.structureVerdict.strength === 'STRONG' ? "bg-[#42a5f5]/20 text-[#42a5f5]" : "bg-[#bdbdbd]/15 text-[#bdbdbd]"
+                      )}>
+                        {signalData.signal.structureVerdict.strength}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 <div className="flex gap-2">
                   {Object.entries(signalData.signal.structureVerdict.perTimeframe).map(([tf, v]) => (
                     <div key={tf} className={cn(

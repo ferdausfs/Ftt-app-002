@@ -68,6 +68,8 @@ export interface StructureVerdictTF {
 }
 
 export interface StructureVerdict {
+  direction: 'BUY' | 'SELL' | 'MIXED' | 'NEUTRAL';
+  strength: 'STRONG' | 'WEAK' | 'NEUTRAL';
   overall: 'ALIGNED' | 'AGAINST' | 'MIXED' | 'NEUTRAL' | 'N/A';
   perTimeframe: Record<string, StructureVerdictTF>;
 }
