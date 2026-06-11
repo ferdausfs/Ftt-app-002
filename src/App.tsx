@@ -21,11 +21,13 @@ import {
   Globe2,
   Activity,
   Gauge,
+  Radar,
   TrendingUp as TrendIcon
 } from 'lucide-react';
 import { SignalData, TimeframeRec } from './types';
 import { cn } from './utils/cn';
 import { PairSelector } from './components/PairSelector';
+import { ScannerView } from './components/ScannerView';
 
 const API_BASE = 'https://fttotcv6.umuhammadiswa.workers.dev';
 
@@ -50,7 +52,7 @@ interface HistoryEntry {
   autoChecked?: boolean; // true if result was set by auto win/loss check
 }
 
-type Tab = 'home' | 'analysis' | 'history' | 'settings';
+type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner';
 
 export default function App() {
   const [selectedPair, setSelectedPair] = useState(() => {
@@ -206,6 +208,12 @@ export default function App() {
   const wins = history.filter(h => h.result === 'WIN').length;
   const losses = history.filter(h => h.result === 'LOSS').length;
   const winRate = wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0';
+
+  const handleScannerSignalClick = (pair: string) => {
+    setSelectedPair(pair);
+    setActiveTab('home');
+    fetchSignal();
+  };
 
   return (
     <div className="min-h-screen bg-[#09090b] text-[#e3e2e6] gradient-mesh">
@@ -479,6 +487,11 @@ export default function App() {
           </div>
         )}
 
+        {/* SCANNER TAB */}
+        {activeTab === 'scanner' && (
+          <ScannerView onSignalClick={handleScannerSignalClick} />
+        )}
+
         {/* HISTORY TAB */}
         {activeTab === 'history' && (
           <div className="fade-in">
@@ -572,6 +585,7 @@ export default function App() {
       <nav className="fixed bottom-0 left-0 right-0 z-50 bg-[#09090b]/90 backdrop-blur-xl border-t border-[#3a3a3e]/50">
         <div className="flex items-center justify-around py-2">
           <NavButton icon={TrendingUp} label="Signal" active={activeTab === 'home'} onClick={() => setActiveTab('home')} />
+          <NavButton icon={Radar} label="Scanner" active={activeTab === 'scanner'} onClick={() => setActiveTab('scanner')} />
           <NavButton icon={BarChart3} label="Analysis" active={activeTab === 'analysis'} onClick={() => setActiveTab('analysis')} />
           <NavButton icon={History} label="History" active={activeTab === 'history'} onClick={() => setActiveTab('history')} badge={pendingCount} />
           <NavButton icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
