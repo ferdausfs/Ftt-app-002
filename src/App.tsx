@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { SignalData, TimeframeRec } from './types';
 import { cn } from './utils/cn';
+import { PairSelector } from './components/PairSelector';
 
 const API_BASE = 'https://fttotcv6.umuhammadiswa.workers.dev';
 
@@ -58,6 +59,20 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('ftt_favorites');
+      return saved ? JSON.parse(saved) : ['EUR/USD', 'GBP/USD', 'XAU/USD'];
+    } catch { return ['EUR/USD', 'GBP/USD', 'XAU/USD']; }
+  });
+
+  const toggleFavorite = (pair: string) => {
+    setFavorites(prev => {
+      const next = prev.includes(pair) ? prev.filter(p => p !== pair) : [...prev, pair];
+      try { localStorage.setItem('ftt_favorites', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [selectedIndicatorTF, setSelectedIndicatorTF] = useState('5min');
@@ -552,14 +567,15 @@ export default function App() {
         </div>
       </nav>
 
-      {/* Pair Picker */}
-      {pickerOpen && (
-        <PairPicker 
-          selected={selectedPair} 
-          onSelect={(p) => { setSelectedPair(p); setPickerOpen(false); }} 
-          onClose={() => setPickerOpen(false)} 
-        />
-      )}
+      {/* Pair Picker with search */}
+      <PairSelector
+        isOpen={pickerOpen}
+        selectedPair={selectedPair}
+        favorites={favorites}
+        onToggleFavorite={toggleFavorite}
+        onSelect={(p) => { setSelectedPair(p); setPickerOpen(false); }}
+        onClose={() => setPickerOpen(false)}
+      />
     </div>
   );
 }
@@ -892,29 +908,5 @@ function NavButton({ icon: Icon, label, active, onClick, badge }: { icon: any; l
         </div>
       )}
     </button>
-  );
-}
-
-function PairPicker({ selected, onSelect, onClose }: { selected: string; onSelect: (p: string) => void; onClose: () => void }) {
-  const pairs = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 'AUD/USD', 'NZD/USD', 'USD/CAD', 'EUR/GBP', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'XAU/USD', 'BTC/USD', 'ETH/USD'];
-  
-  return (
-    <div className="fixed inset-0 z-[100] flex items-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/60 fade-in" />
-      <div className="relative w-full md-bottom-sheet p-4 slide-up max-h-[70vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="w-10 h-1 bg-[#3a3a3e] rounded-full mx-auto mb-4" />
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-medium">Select Pair</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full bg-[#27272d] flex items-center justify-center"><Minus className="w-4 h-4" /></button>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {pairs.map(p => (
-            <button key={p} onClick={() => onSelect(p)} className={cn("p-3 rounded-xl text-left font-medium transition-all", selected === p ? "bg-[#42a5f5]/20 text-[#42a5f5]" : "bg-[#27272d] text-[#e3e2e6] active:scale-95")}>
-              {p}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
   );
 }
