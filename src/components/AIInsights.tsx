@@ -41,7 +41,7 @@ export function AIInsights({ data }: { data: SignalData }) {
             "font-bold text-base",
             ai.signal === 'BUY' && "text-[#30d158]",
             ai.signal === 'SELL' && "text-[#ff453a]",
-            !['BUY','SELL'].includes(ai.signal) && "text-white/60"
+            !['BUY','SELL'].includes(ai.signal || '') && "text-white/60"
           )}>{ai.signal}</div>
         </div>
         <div className="bg-white/[0.04] rounded-xl p-2.5">

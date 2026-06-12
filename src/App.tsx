@@ -88,17 +88,35 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshCountdown, setRefreshCountdown] = useState(60);
 
+  const fetchAbortRef = useRef<AbortController | null>(null);
+  const fetchInFlightRef = useRef(false);
+
   const fetchSignal = useCallback(async (silent = false) => {
+    // Prevent overlapping requests (a previous slow/hung request could
+    // otherwise keep `loading=true` forever and block the UI)
+    if (fetchInFlightRef.current) return;
+    fetchInFlightRef.current = true;
+
+    // Abort any previous in-flight request just in case
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s hard timeout
+
     if (!silent) setLoading(true);
     setError(null);
+    const requestedPair = selectedPair;
     try {
-      const cleanPair = selectedPair.replace('/', '').toLowerCase();
-      const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`);
+      const cleanPair = requestedPair.replace('/', '').toLowerCase();
+      const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
       if (!response.ok) throw new Error('Network error');
       const data: SignalData = await response.json();
-      
+
       if (!data?.signal) throw new Error('Invalid response');
-      
+
+      // If the user switched pairs while this request was in flight, drop it
+      if (requestedPair !== selectedPair) return;
+
       setSignalData(data);
       setLastUpdated(new Date());
       setRefreshCountdown(60);
@@ -131,9 +149,15 @@ export default function App() {
           return [newEntry, ...prev].slice(0, 100);
         });
       }
-    } catch {
-      setError('Unable to fetch signal. Tap retry.');
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        setError('Request timed out. Tap retry.');
+      } else {
+        setError('Unable to fetch signal. Tap retry.');
+      }
     } finally {
+      clearTimeout(timeoutId);
+      fetchInFlightRef.current = false;
       setLoading(false);
     }
   }, [selectedPair]);
@@ -144,15 +168,42 @@ export default function App() {
 
   useEffect(() => { fetchSignal(); try { localStorage.setItem('ftt_selected_pair', selectedPair); } catch {} }, [selectedPair]);
 
+  // Auto-refresh: timestamp-based (not tick-counter-based) so it's resilient
+  // to the tab/screen being backgrounded for a long time. When the page
+  // becomes visible again, we immediately check if a refresh is overdue.
+  const nextRefreshAtRef = useRef<number>(Date.now() + 60000);
+
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(() => {
-      setRefreshCountdown(s => {
-        if (s <= 1) { fetchSignal(true); return 60; }
-        return s - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
+
+    nextRefreshAtRef.current = Date.now() + 60000;
+
+    const tick = () => {
+      const now = Date.now();
+      const remaining = nextRefreshAtRef.current - now;
+      if (remaining <= 0) {
+        nextRefreshAtRef.current = now + 60000;
+        setRefreshCountdown(60);
+        fetchSignal(true);
+      } else {
+        setRefreshCountdown(Math.max(1, Math.ceil(remaining / 1000)));
+      }
+    };
+
+    const interval = setInterval(tick, 1000);
+
+    // When the app comes back from background/sleep, immediately re-check
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        tick();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [autoRefresh, fetchSignal]);
 
   const handleReport = (id: string, result: 'WIN' | 'LOSS') => {
@@ -162,26 +213,34 @@ export default function App() {
 
   // Auto WIN/LOSS checker: every 30s, check PENDING entries whose expiry has
   // passed, fetch current price for that pair, and compare vs entry price.
+  // Uses a ref for `history` so the interval is created ONCE, not re-created
+  // every time history changes (which previously caused timer churn).
+  const historyRef = useRef(history);
+  historyRef.current = history;
+
   useEffect(() => {
+    let cancelled = false;
+
     const checkExpired = async () => {
       const now = Date.now();
-      const due = history.filter(h =>
+      const due = historyRef.current.filter(h =>
         (!h.result || h.result === 'PENDING') &&
         h.expiryTime && h.expiryTime <= now
       );
       if (due.length === 0) return;
 
-      // Check one at a time to respect API limits
       const entry = due[0];
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       try {
         const cleanPair = entry.pair.replace('/', '').toLowerCase();
-        const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`);
+        const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
         if (!response.ok) return;
         const data: SignalData = await response.json();
         const currentPrice = data.signal?.recommendations?.['1min']?.entry?.price
           || data.signal?.bestTimeframe?.score
           || null;
-        if (currentPrice == null || !entry.entryPrice) return;
+        if (currentPrice == null || !entry.entryPrice || cancelled) return;
 
         const movedUp = currentPrice > entry.entryPrice;
         const movedDown = currentPrice < entry.entryPrice;
@@ -197,12 +256,14 @@ export default function App() {
         }
       } catch {
         // silent — will retry next cycle
+      } finally {
+        clearTimeout(timeoutId);
       }
     };
 
     const interval = setInterval(checkExpired, 30000);
-    return () => clearInterval(interval);
-  }, [history]);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
 
   const pendingCount = history.filter(h => !h.result || h.result === 'PENDING').length;
   const wins = history.filter(h => h.result === 'WIN').length;

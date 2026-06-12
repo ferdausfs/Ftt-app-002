@@ -84,9 +84,11 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
 
   const fetchOne = useCallback(async (pair: string) => {
     setResults(prev => ({ ...prev, [pair]: { ...prev[pair], pair, status: 'loading' } }));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     try {
       const cleanPair = pair.replace('/', '').toLowerCase();
-      const res = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`);
+      const res = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
       if (!res.ok) throw new Error('net');
       const data: SignalData = await res.json();
       if (!data?.signal) throw new Error('invalid');
@@ -141,16 +143,23 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
       }
     } catch {
       setResults(prev => ({ ...prev, [pair]: { ...prev[pair], pair, status: 'error', updatedAt: Date.now() } }));
+    } finally {
+      clearTimeout(timeoutId);
     }
   }, []);
 
+  const scanningRef = useRef(false);
+
   const scanAll = useCallback(async () => {
     if (pairs.length === 0) return;
+    if (scanningRef.current) return; // prevent overlapping scans
+    scanningRef.current = true;
     setScanning(true);
     // sequential to be gentle on the API
     for (const pair of pairs) {
       await fetchOne(pair);
     }
+    scanningRef.current = false;
     setScanning(false);
     setCountdown(intervalMs / 1000);
   }, [pairs, fetchOne, intervalMs]);
@@ -160,22 +169,45 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
     ensureNotificationPermission();
   }, []);
 
-  // Initial scan + interval
+  // Initial scan + interval (timestamp-based so background/sleep doesn't
+  // cause drift or a pile-up of missed ticks)
+  const pairsRef = useRef(pairs);
+  pairsRef.current = pairs;
+  const scanAllRef = useRef(scanAll);
+  scanAllRef.current = scanAll;
+  const nextScanAtRef = useRef<number>(Date.now() + intervalMs);
+
   useEffect(() => {
-    if (!enabled) return;
-    scanAll();
-    const interval = setInterval(() => {
-      setCountdown(s => {
-        if (s <= 1) {
-          scanAll();
-          return intervalMs / 1000;
-        }
-        return s - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
+    if (!enabled || pairs.length === 0) return;
+
+    nextScanAtRef.current = Date.now() + intervalMs;
+    scanAllRef.current();
+
+    const tick = () => {
+      const now = Date.now();
+      const remaining = nextScanAtRef.current - now;
+      if (remaining <= 0) {
+        nextScanAtRef.current = now + intervalMs;
+        setCountdown(intervalMs / 1000);
+        scanAllRef.current();
+      } else {
+        setCountdown(Math.max(1, Math.ceil(remaining / 1000)));
+      }
+    };
+
+    const interval = setInterval(tick, 1000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, JSON.stringify(pairs), intervalMs]);
+  }, [enabled, pairs.length, intervalMs]);
 
   // Click on a row in the scanner list — same dedupe + navigate behavior
   const handleRowClick = useCallback((pair: string) => {
