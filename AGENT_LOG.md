@@ -1,5 +1,25 @@
 # AGENT_LOG
 
+## 2026-07-25 — Premium Market Closed UI state
+
+### Scope
+- App-only UI update for valid worker responses where Forex is closed and `signal` is `null`.
+- Worker repo was not changed.
+
+### Changes
+- Added market-closed response fields to `SignalData`: `message`, `nextOpen`, `nextOpenReadable`, `opensIn`, `advice`, and `cryptoAlternative`; `session` is optional because closed responses do not include session data.
+- Updated `fetchSignal` so `marketStatus: 'CLOSED'` + `signal: null` is treated as a valid success response instead of throwing `Invalid response`.
+- Guarded history-entry creation with `data.signal && ...` so closed responses cannot crash or create fake history entries.
+- Added a premium `MarketClosedCard` with status, next-open time, `opensIn`, advice text, and a primary action button that extracts the crypto pair from `cryptoAlternative` and switches to `BTC/USD` fallback if needed.
+- Kept the existing red error banner for real network, timeout, or malformed-response errors only.
+
+### Verification
+- Live EUR/USD check returned `HTTP/2 200`, `marketStatus: CLOSED`, `signal: null`, `opensIn: 1d 11h 1m`, and `cryptoAlternative: Try /api/signal?pair=BTC/USD`; this now renders the closed card path instead of the generic error path.
+- Live BTC/USD check returned `HTTP/2 200`, `marketStatus: OPEN`, and a real signal object; this remains on the normal signal UI path.
+- Invalid pair check returned `HTTP/2 400`, so `response.ok` remains false and the existing network/error banner path is preserved for real errors.
+- `npx tsc --noEmit` passed.
+- `npm run build` passed and printed `✓ built in 2.44s`.
+
 ## 2026-07-25 — Phase 3 app fixes: price fallback, API config, PWA icons
 
 ### Scope

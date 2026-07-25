@@ -83,7 +83,13 @@ export interface SignalData {
   isOTC?: boolean;
   otcBroker?: string;
   marketStatus: string;
-  session: {
+  message?: string;
+  nextOpen?: string;
+  nextOpenReadable?: string;
+  opensIn?: string;
+  advice?: string;
+  cryptoAlternative?: string;
+  session?: {
     sessions: string[];
     overlap?: string;
     quality: string;

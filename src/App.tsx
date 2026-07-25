@@ -54,6 +54,11 @@ interface HistoryEntry {
   reportError?: string;
 }
 
+type TradableSignalData = SignalData & {
+  signal: NonNullable<SignalData['signal']>;
+  session: NonNullable<SignalData['session']>;
+};
+
 type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner';
 
 export default function App() {
@@ -122,7 +127,10 @@ export default function App() {
       if (!response.ok) throw new Error('Network error');
       const data: SignalData = await response.json();
 
-      if (!data?.signal) throw new Error('Invalid response');
+      const isMarketClosedResponse = data?.marketStatus === 'CLOSED' && data.signal === null;
+      if (!data?.marketStatus || (!data.signal && !isMarketClosedResponse)) {
+        throw new Error('Invalid response');
+      }
 
       // If the user switched pairs while this request was in flight, drop it
       if (requestedPair !== selectedPair) return;
@@ -131,7 +139,7 @@ export default function App() {
       setLastUpdated(new Date());
       setRefreshCountdown(60);
 
-      if (['BUY', 'SELL'].includes(data.signal.finalSignal)) {
+      if (data.signal && ['BUY', 'SELL'].includes(data.signal.finalSignal)) {
         const workerSignalId = data.id || data.signalId;
         const bestTF = data.signal.bestTimeframe?.timeframe || '5min';
         const localDedupeKey = `local-${data.pair}-${data.signal.finalSignal}-${bestTF}-${Math.floor(Date.now()/60000)}`;
@@ -367,6 +375,24 @@ export default function App() {
     fetchSignal();
   };
 
+  const handleMarketClosedSwitch = (pair: string) => {
+    setError(null);
+    setActiveTab('home');
+    if (pair !== selectedPair) {
+      setSignalData(null);
+      setSelectedPair(pair);
+    } else {
+      fetchSignal();
+    }
+  };
+
+  const marketClosedData = signalData && (signalData.marketStatus === 'CLOSED' || signalData.signal === null)
+    ? signalData
+    : null;
+  const tradableSignalData = signalData?.signal && signalData.session
+    ? (signalData as TradableSignalData)
+    : null;
+
   return (
     <div className="min-h-screen bg-[#09090b] text-[#e3e2e6] gradient-mesh">
       {/* Top App Bar */}
@@ -423,12 +449,16 @@ export default function App() {
         )}
 
         {/* HOME TAB */}
-        {activeTab === 'home' && signalData && (
+        {activeTab === 'home' && marketClosedData && (
+          <MarketClosedCard data={marketClosedData} onSwitchPair={handleMarketClosedSwitch} />
+        )}
+
+        {activeTab === 'home' && tradableSignalData && (
           <div className="space-y-3 fade-in">
-            <MaterialSignalCard data={signalData} onPairClick={() => setPickerOpen(true)} />
+            <MaterialSignalCard data={tradableSignalData} onPairClick={() => setPickerOpen(true)} />
             
             {/* AI Insights */}
-            {signalData.signal.aiValidation?.combined && (
+            {tradableSignalData.signal.aiValidation?.combined && (
               <div className="md-surface p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -437,22 +467,22 @@ export default function App() {
                     </div>
                     <div>
                       <div className="text-sm font-medium">AI Analysis</div>
-                      <div className="text-xs text-[#b0b3b8]">{signalData.signal.aiValidation.combined.model || 'Multi-model'}</div>
+                      <div className="text-xs text-[#b0b3b8]">{tradableSignalData.signal.aiValidation.combined.model || 'Multi-model'}</div>
                     </div>
                   </div>
                   <div className={cn(
                     "px-3 py-1 rounded-full text-xs font-medium",
-                    signalData.signal.aiValidation.agrees 
+                    tradableSignalData.signal.aiValidation.agrees 
                       ? "bg-[#81c784]/20 text-[#81c784]" 
                       : "bg-[#ffb74d]/20 text-[#ffb74d]"
                   )}>
-                    {signalData.signal.aiValidation.combined.agreement === 'BOTH_AGREE' ? '✓ Both Agree' : signalData.signal.aiValidation.agrees ? '✓ Agree' : '⚠ Divergent'}
+                    {tradableSignalData.signal.aiValidation.combined.agreement === 'BOTH_AGREE' ? '✓ Both Agree' : tradableSignalData.signal.aiValidation.agrees ? '✓ Agree' : '⚠ Divergent'}
                   </div>
                 </div>
                 {/* Individual model status */}
                 <div className="flex gap-2 mb-3">
                   {(['cerebras','groq'] as const).map(model => {
-                    const m = signalData.signal.aiValidation![model];
+                    const m = tradableSignalData.signal.aiValidation![model];
                     if (!m) return null;
                     const ok = m.status === 'OK';
                     return (
@@ -468,27 +498,27 @@ export default function App() {
                     <div className="text-xs text-[#b0b3b8] mb-1">AI Signal</div>
                     <div className={cn(
                       "text-lg font-medium",
-                      signalData.signal.aiValidation.combined.signal === 'BUY' && "text-[#81c784]",
-                      signalData.signal.aiValidation.combined.signal === 'SELL' && "text-[#ef5350]"
-                    )}>{signalData.signal.aiValidation.combined.signal}</div>
+                      tradableSignalData.signal.aiValidation.combined.signal === 'BUY' && "text-[#81c784]",
+                      tradableSignalData.signal.aiValidation.combined.signal === 'SELL' && "text-[#ef5350]"
+                    )}>{tradableSignalData.signal.aiValidation.combined.signal}</div>
                   </div>
                   <div className="bg-[#27272d] rounded-xl p-3">
                     <div className="text-xs text-[#b0b3b8] mb-1">Confidence</div>
-                    <div className="text-lg font-medium number-tabular">{signalData.signal.aiValidation.combined.confidence}%</div>
+                    <div className="text-lg font-medium number-tabular">{tradableSignalData.signal.aiValidation.combined.confidence}%</div>
                   </div>
                 </div>
-                <p className="text-sm text-[#c4c6d0] leading-relaxed">{signalData.signal.aiValidation.combined.reason}</p>
-                {signalData.signal.aiValidation.combined.concerns && (
+                <p className="text-sm text-[#c4c6d0] leading-relaxed">{tradableSignalData.signal.aiValidation.combined.reason}</p>
+                {tradableSignalData.signal.aiValidation.combined.concerns && (
                   <div className="mt-2 flex items-start gap-2 p-2.5 bg-[#ffb74d]/10 rounded-xl border border-[#ffb74d]/20">
                     <span className="text-[#ffb74d] text-xs mt-0.5">⚠</span>
-                    <p className="text-xs text-[#ffb74d]/90 leading-relaxed">{signalData.signal.aiValidation.combined.concerns}</p>
+                    <p className="text-xs text-[#ffb74d]/90 leading-relaxed">{tradableSignalData.signal.aiValidation.combined.concerns}</p>
                   </div>
                 )}
               </div>
             )}
 
             {/* Structure Verdict */}
-            {signalData.signal.structureVerdict && signalData.signal.structureVerdict.overall !== 'N/A' && (
+            {tradableSignalData.signal.structureVerdict && tradableSignalData.signal.structureVerdict.overall !== 'N/A' && (
               <div className="md-surface p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -502,15 +532,15 @@ export default function App() {
                   </div>
                   <div className={cn(
                     "px-3 py-1 rounded-full text-xs font-bold",
-                    signalData.signal.structureVerdict.overall === 'ALIGNED' && "bg-[#81c784]/20 text-[#81c784]",
-                    signalData.signal.structureVerdict.overall === 'AGAINST' && "bg-[#ef5350]/20 text-[#ef5350]",
-                    signalData.signal.structureVerdict.overall === 'MIXED' && "bg-[#ffb74d]/20 text-[#ffb74d]",
-                    signalData.signal.structureVerdict.overall === 'NEUTRAL' && "bg-[#bdbdbd]/20 text-[#bdbdbd]",
+                    tradableSignalData.signal.structureVerdict.overall === 'ALIGNED' && "bg-[#81c784]/20 text-[#81c784]",
+                    tradableSignalData.signal.structureVerdict.overall === 'AGAINST' && "bg-[#ef5350]/20 text-[#ef5350]",
+                    tradableSignalData.signal.structureVerdict.overall === 'MIXED' && "bg-[#ffb74d]/20 text-[#ffb74d]",
+                    tradableSignalData.signal.structureVerdict.overall === 'NEUTRAL' && "bg-[#bdbdbd]/20 text-[#bdbdbd]",
                   )}>
-                    {signalData.signal.structureVerdict.overall === 'ALIGNED' && '✓ ALIGNED'}
-                    {signalData.signal.structureVerdict.overall === 'AGAINST' && '✗ AGAINST'}
-                    {signalData.signal.structureVerdict.overall === 'MIXED' && '~ MIXED'}
-                    {signalData.signal.structureVerdict.overall === 'NEUTRAL' && '— NEUTRAL'}
+                    {tradableSignalData.signal.structureVerdict.overall === 'ALIGNED' && '✓ ALIGNED'}
+                    {tradableSignalData.signal.structureVerdict.overall === 'AGAINST' && '✗ AGAINST'}
+                    {tradableSignalData.signal.structureVerdict.overall === 'MIXED' && '~ MIXED'}
+                    {tradableSignalData.signal.structureVerdict.overall === 'NEUTRAL' && '— NEUTRAL'}
                   </div>
                 </div>
                 {/* Structure's own direction call */}
@@ -519,24 +549,24 @@ export default function App() {
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       "text-sm font-bold",
-                      signalData.signal.structureVerdict.direction === 'BUY' && "text-[#81c784]",
-                      signalData.signal.structureVerdict.direction === 'SELL' && "text-[#ef5350]",
-                      (signalData.signal.structureVerdict.direction === 'NEUTRAL' || signalData.signal.structureVerdict.direction === 'MIXED') && "text-[#bdbdbd]",
+                      tradableSignalData.signal.structureVerdict.direction === 'BUY' && "text-[#81c784]",
+                      tradableSignalData.signal.structureVerdict.direction === 'SELL' && "text-[#ef5350]",
+                      (tradableSignalData.signal.structureVerdict.direction === 'NEUTRAL' || tradableSignalData.signal.structureVerdict.direction === 'MIXED') && "text-[#bdbdbd]",
                     )}>
-                      {signalData.signal.structureVerdict.direction}
+                      {tradableSignalData.signal.structureVerdict.direction}
                     </span>
-                    {signalData.signal.structureVerdict.strength !== 'NEUTRAL' && (
+                    {tradableSignalData.signal.structureVerdict.strength !== 'NEUTRAL' && (
                       <span className={cn(
                         "text-[10px] px-2 py-0.5 rounded-full font-medium",
-                        signalData.signal.structureVerdict.strength === 'STRONG' ? "bg-[#42a5f5]/20 text-[#42a5f5]" : "bg-[#bdbdbd]/15 text-[#bdbdbd]"
+                        tradableSignalData.signal.structureVerdict.strength === 'STRONG' ? "bg-[#42a5f5]/20 text-[#42a5f5]" : "bg-[#bdbdbd]/15 text-[#bdbdbd]"
                       )}>
-                        {signalData.signal.structureVerdict.strength}
+                        {tradableSignalData.signal.structureVerdict.strength}
                       </span>
                     )}
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  {Object.entries(signalData.signal.structureVerdict.perTimeframe).map(([tf, v]) => (
+                  {Object.entries(tradableSignalData.signal.structureVerdict.perTimeframe).map(([tf, v]) => (
                     <div key={tf} className={cn(
                       "flex-1 text-center py-2 rounded-xl text-xs font-medium",
                       v.verdict === 'AGREE' && "bg-[#81c784]/10 text-[#81c784]",
@@ -549,12 +579,12 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-                {signalData.signal.structureVerdict.overall === 'AGAINST' && (
+                {tradableSignalData.signal.structureVerdict.overall === 'AGAINST' && (
                   <p className="mt-3 text-xs text-[#ef5350]/80 bg-[#ef5350]/10 rounded-lg p-2.5">
                     ⚠ Structure is against the signal — consider skipping or wait for structure to align.
                   </p>
                 )}
-                {signalData.signal.structureVerdict.overall === 'MIXED' && (
+                {tradableSignalData.signal.structureVerdict.overall === 'MIXED' && (
                   <p className="mt-3 text-xs text-[#ffb74d]/80 bg-[#ffb74d]/10 rounded-lg p-2.5">
                     ~ Mixed structure — trade with caution, check the best timeframe.
                   </p>
@@ -569,18 +599,18 @@ export default function App() {
                 <span className="text-sm font-medium">Market Sessions</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                {signalData.session.sessions.map(s => (
+                {tradableSignalData.session.sessions.map(s => (
                   <div key={s} className="px-3 py-1.5 bg-[#27272d] rounded-lg text-sm font-medium">
                     {s}
                   </div>
                 ))}
                 <div className={cn(
                   "px-3 py-1.5 rounded-lg text-sm font-medium",
-                  signalData.session.quality === 'HIGH' && "bg-[#81c784]/20 text-[#81c784]",
-                  signalData.session.quality === 'MEDIUM' && "bg-[#ffb74d]/20 text-[#ffb74d]",
-                  signalData.session.quality === 'LOW' && "bg-[#ef5350]/20 text-[#ef5350]"
+                  tradableSignalData.session.quality === 'HIGH' && "bg-[#81c784]/20 text-[#81c784]",
+                  tradableSignalData.session.quality === 'MEDIUM' && "bg-[#ffb74d]/20 text-[#ffb74d]",
+                  tradableSignalData.session.quality === 'LOW' && "bg-[#ef5350]/20 text-[#ef5350]"
                 )}>
-                  {signalData.session.quality} Quality
+                  {tradableSignalData.session.quality} Quality
                 </div>
               </div>
             </div>
@@ -591,7 +621,7 @@ export default function App() {
                 <Zap className="w-4 h-4 text-[#ffb74d]" />
                 <span className="text-sm font-medium">Entry Reasoning</span>
               </div>
-              <p className="text-sm text-[#c4c6d0] leading-relaxed">{signalData.signal.entryReason}</p>
+              <p className="text-sm text-[#c4c6d0] leading-relaxed">{tradableSignalData.signal.entryReason}</p>
             </div>
 
             {/* Market Regime */}
@@ -603,17 +633,17 @@ export default function App() {
                 </div>
                 <span className={cn(
                   "px-3 py-1 rounded-full text-xs font-medium",
-                  signalData.signal.marketRegime === 'TRENDING' && "bg-[#81c784]/20 text-[#81c784]",
-                  signalData.signal.marketRegime === 'RANGING' && "bg-[#ffb74d]/20 text-[#ffb74d]"
-                )}>{signalData.signal.marketRegime}</span>
+                  tradableSignalData.signal.marketRegime === 'TRENDING' && "bg-[#81c784]/20 text-[#81c784]",
+                  tradableSignalData.signal.marketRegime === 'RANGING' && "bg-[#ffb74d]/20 text-[#ffb74d]"
+                )}>{tradableSignalData.signal.marketRegime}</span>
               </div>
-              <p className="text-sm text-[#b0b3b8]">{signalData.signal.regimeAdvice}</p>
+              <p className="text-sm text-[#b0b3b8]">{tradableSignalData.signal.regimeAdvice}</p>
             </div>
           </div>
         )}
 
         {/* ANALYSIS TAB */}
-        {activeTab === 'analysis' && signalData && (
+        {activeTab === 'analysis' && tradableSignalData && (
           <div className="space-y-3 fade-in">
             <div className="md-surface p-4">
               <div className="flex items-center gap-2 mb-1">
@@ -623,7 +653,7 @@ export default function App() {
               <p className="text-xs text-[#b0b3b8]">Signal strength across all timeframes</p>
             </div>
 
-            {Object.entries(signalData.signal.recommendations).map(([tf, rec]) => (
+            {Object.entries(tradableSignalData.signal.recommendations).map(([tf, rec]) => (
               <TimeframeCard key={tf} tf={tf} rec={rec} />
             ))}
 
@@ -631,8 +661,8 @@ export default function App() {
               <h3 className="text-xs uppercase tracking-wider text-[#8e9099] font-medium px-1">Technical Indicators</h3>
             </div>
             <IndicatorGrid 
-              recommendations={signalData.signal.recommendations}
-              timeframeAnalysis={signalData.signal.timeframeAnalysis}
+              recommendations={tradableSignalData.signal.recommendations}
+              timeframeAnalysis={tradableSignalData.signal.timeframeAnalysis}
               selectedTF={selectedIndicatorTF}
               onSelectTF={setSelectedIndicatorTF}
             />
@@ -719,7 +749,7 @@ export default function App() {
 
             <div className="md-surface overflow-hidden">
               <SettingRow icon={Info} iconColor="#42a5f5" label="Version" value="2.0.0" />
-              <SettingRow icon={Code} iconColor="#b39ddb" label="API Method" value={signalData?.signal.method?.split('_').slice(0, 2).join(' ') || 'v6.9.2'} isLast />
+              <SettingRow icon={Code} iconColor="#b39ddb" label="API Method" value={signalData?.signal?.method?.split('_').slice(0, 2).join(' ') || 'v6.9.2'} isLast />
             </div>
 
             <div className="text-center py-8">
@@ -758,7 +788,89 @@ export default function App() {
 }
 
 // Components
-function MaterialSignalCard({ data, onPairClick }: { data: SignalData; onPairClick: () => void }) {
+function getCryptoAlternativePair(data: SignalData): string {
+  const fallback = 'BTC/USD';
+  const alt = data.cryptoAlternative || '';
+  const match = alt.match(/pair=([^\s&]+)/i) || alt.match(/([A-Z]{3,5}\/[A-Z]{3,5}|[A-Z]{6,10})/i);
+  const raw = match?.[1];
+  if (!raw) return fallback;
+
+  let decoded = raw;
+  try { decoded = decodeURIComponent(raw); } catch {}
+
+  const cleaned = decoded.toUpperCase().replace(/[^A-Z0-9/]/g, '');
+  if (cleaned.includes('/')) return cleaned;
+  if (cleaned.length === 6) return `${cleaned.slice(0, 3)}/${cleaned.slice(3)}`;
+  return fallback;
+}
+
+function MarketClosedCard({ data, onSwitchPair }: { data: SignalData; onSwitchPair: (pair: string) => void }) {
+  const cryptoPair = getCryptoAlternativePair(data);
+  const nextOpen = data.nextOpen ? new Date(data.nextOpen) : null;
+  const nextOpenLabel = data.nextOpenReadable || (nextOpen && !Number.isNaN(nextOpen.getTime()) ? nextOpen.toUTCString() : null);
+
+  return (
+    <div className="space-y-3 fade-in">
+      <div className="md-surface-highest p-0 overflow-hidden scale-in border border-[#4dd0e1]/10">
+        <div className="h-1.5 w-full bg-gradient-to-r from-[#4dd0e1] via-[#26a69a] to-[#42a5f5]" />
+        <div className="p-5">
+          <div className="flex items-start justify-between gap-3 mb-5">
+            <div className="flex items-start gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-[#4dd0e1]/15 flex items-center justify-center shadow-lg shadow-[#4dd0e1]/5">
+                <Clock className="w-7 h-7 text-[#4dd0e1]" strokeWidth={2.4} />
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wider text-[#4dd0e1] font-bold mb-1">Market status</div>
+                <h2 className="text-2xl font-medium leading-tight">Forex Market Closed</h2>
+                <p className="text-sm text-[#b0b3b8] mt-1 leading-relaxed">
+                  {data.message || 'Forex market is currently closed.'}
+                </p>
+              </div>
+            </div>
+            <div className="px-3 py-1.5 rounded-full bg-[#27272d] text-[#ffb74d] text-xs font-bold border border-[#ffb74d]/20">
+              CLOSED
+            </div>
+          </div>
+
+          <div className="grid gap-3 mb-4">
+            <div className="bg-[#1e1e23] rounded-2xl p-4 border border-[#3a3a3e]/60">
+              <div className="flex items-center gap-2 text-xs text-[#b0b3b8] mb-2">
+                <Globe2 className="w-4 h-4 text-[#42a5f5]" />
+                <span>Next forex open</span>
+              </div>
+              <div className="text-base font-medium text-[#e3e2e6] leading-snug">
+                {nextOpenLabel || 'Next open time unavailable'}
+              </div>
+              {data.opensIn && (
+                <div className="inline-flex items-center gap-2 mt-3 px-3 py-1.5 rounded-full bg-[#4dd0e1]/10 text-[#4dd0e1] text-xs font-bold">
+                  <div className="w-2 h-2 rounded-full bg-[#4dd0e1] animate-pulse" />
+                  Opens in {data.opensIn}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-[#27272d] rounded-2xl p-4 border border-[#3a3a3e]/50">
+              <div className="text-xs uppercase tracking-wider text-[#8e9099] font-medium mb-2">What to do now</div>
+              <p className="text-sm text-[#c4c6d0] leading-relaxed">
+                {data.advice || 'Wait for forex to reopen, or switch to crypto markets which run 24/7.'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onSwitchPair(cryptoPair)}
+            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#4dd0e1] to-[#26a69a] text-[#00363a] font-bold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg shadow-[#4dd0e1]/10"
+          >
+            <Zap className="w-4 h-4" />
+            Switch to {cryptoPair} (24/7)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; onPairClick: () => void }) {
   const signal = data.signal.finalSignal;
   const isBuy = signal === 'BUY';
   const isSell = signal === 'SELL';
