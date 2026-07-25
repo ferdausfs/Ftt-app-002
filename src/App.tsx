@@ -28,8 +28,7 @@ import { SignalData, TimeframeRec } from './types';
 import { cn } from './utils/cn';
 import { PairSelector } from './components/PairSelector';
 import { ScannerView } from './components/ScannerView';
-
-const API_BASE = 'https://fttotcv6.umuhammadiswa.workers.dev';
+import { API_BASE } from './config';
 
 interface HistoryEntry {
   id: string;
@@ -301,9 +300,7 @@ export default function App() {
         const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
         if (!response.ok) return;
         const data: SignalData = await response.json();
-        const currentPrice = data.signal?.recommendations?.['1min']?.entry?.price
-          || data.signal?.bestTimeframe?.score
-          || null;
+        const currentPrice = data.signal?.recommendations?.['1min']?.entry?.price ?? null;
         if (currentPrice == null || !entry.entryPrice || cancelled) return;
 
         const movedUp = currentPrice > entry.entryPrice;

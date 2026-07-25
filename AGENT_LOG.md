@@ -1,5 +1,43 @@
 # AGENT_LOG
 
+## 2026-07-25 — Phase 3 app fixes: price fallback, API config, PWA icons
+
+### Scope
+- Phase 3 app-only fixes approved after Phase 1 live deployment.
+- Worker repo was not changed in this phase.
+- Unused duplicate components were reviewed only as a proposal item; no component wiring/deletion was done.
+
+### Changes
+- Fixed the auto WIN/LOSS checker in `src/App.tsx` so it only compares against a real recommendation entry price and no longer falls back to `bestTimeframe.score` as a fake price.
+- Added shared `src/config.ts` with `API_BASE` and imported it from `src/App.tsx` and `src/hooks/useScanner.ts` to remove duplicated hardcoded API base constants.
+- Regenerated all PWA manifest icon files from the existing 1024x1024 source icon at exact declared sizes: 72, 96, 128, 144, 152, 192, 384, and 512.
+
+### Verification
+- Confirmed the auto checker now uses `data.signal?.recommendations?.['1min']?.entry?.price ?? null`; when no price exists, the existing `currentPrice == null` guard skips result marking.
+- Icon dimensions and file sizes were verified after regeneration.
+- `npx tsc --noEmit` passed.
+- `npm run build` passed and printed `✓ built in 2.71s`.
+
+## 2026-07-25 — Phase 1 deployment/live verification close-out
+
+### Deployment confirmation
+- Worker commit range `783da63..b7df4b5` (workflow file added) is live on Cloudflare.
+- Worker fix commit range `ca0afc6..783da63` is live on Cloudflare.
+- App commit range `a3f0710..22b7b92` is live.
+
+### Live verification copied from deployment check
+```bash
+curl -s "https://fttotcv6.umuhammadiswa.workers.dev/api/signal?pair=btcusd"
+# → response contained "id": "sig_1784961540601_yhq50"
+
+curl -s "https://fttotcv6.umuhammadiswa.workers.dev/api/report?id=sig_1784961540601_yhq50&result=WIN"
+# → {"success":true,"signalId":"sig_...","pair":"BTC/USD","result":"WIN","message":"Result recorded. Stats updated."}
+```
+
+### Notes
+- Worker repo now has `.github/workflows/deploy.yml`; future worker pushes auto-deploy through CI, so manual `wrangler deploy` is no longer required.
+- Transparency note: during verification, real signal ID `sig_1784961540601_yhq50` was marked as `WIN`, so BTC/USD production win-rate stats include this one test result. This is minor production data pollution but should remain documented.
+
 ## 2026-07-25 — Phase 1 `/api/report` endpoint ID fix
 
 ### Scope

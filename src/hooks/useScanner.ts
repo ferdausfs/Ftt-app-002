@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { SignalData } from '../types';
 import { fireSignalNotification, ensureNotificationPermission } from '../utils/notify';
-
-const API_BASE = 'https://fttotcv6.umuhammadiswa.workers.dev';
+import { API_BASE } from '../config';
 
 export interface ScannerResult {
   pair: string;
