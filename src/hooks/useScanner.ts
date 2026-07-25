@@ -95,6 +95,8 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
 
       const direction = data.signal.finalSignal;
       const bestTF = data.signal.bestTimeframe?.timeframe || '5min';
+      // Intentionally keep this as a local notification de-dupe key only.
+      // Scanner results are not used for /api/report; reportable history IDs come from App.tsx.
       const signalKey = ['BUY', 'SELL'].includes(direction)
         ? `${data.pair}-${direction}-${bestTF}-${Math.floor(Date.now() / 60000)}`
         : undefined;

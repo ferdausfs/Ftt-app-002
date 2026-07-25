@@ -75,6 +75,8 @@ export interface StructureVerdict {
 }
 
 export interface SignalData {
+  id?: string;
+  signalId?: string;
   pair: string;
   basePair?: string;
   assetType: string;

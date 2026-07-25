@@ -50,6 +50,9 @@ interface HistoryEntry {
   expiryTime?: number; // ms epoch when this trade expires
   aiAgree?: boolean;
   autoChecked?: boolean; // true if result was set by auto win/loss check
+  reportable?: boolean; // false when no worker signal ID exists (local-only fallback)
+  reportStatus?: 'syncing' | 'synced' | 'failed';
+  reportError?: string;
 }
 
 type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner';
@@ -80,13 +83,21 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>(() => {
     try {
       const saved = localStorage.getItem('ftt_history');
-      return saved ? JSON.parse(saved) : [];
+      const parsed: HistoryEntry[] = saved ? JSON.parse(saved) : [];
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(entry => ({
+        ...entry,
+        reportable: entry.reportable ?? (typeof entry.id === 'string' && entry.id.startsWith('sig_')),
+      }));
     } catch { return []; }
   });
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [selectedIndicatorTF, setSelectedIndicatorTF] = useState('5min');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshCountdown, setRefreshCountdown] = useState(60);
+
+  const historyRef = useRef<HistoryEntry[]>(history);
+  historyRef.current = history;
 
   const fetchAbortRef = useRef<AbortController | null>(null);
   const fetchInFlightRef = useRef(false);
@@ -121,13 +132,24 @@ export default function App() {
       setLastUpdated(new Date());
       setRefreshCountdown(60);
 
-      const sigKey = `${data.pair}-${data.signal.finalSignal}-${data.signal.bestTimeframe?.timeframe}-${Math.floor(Date.now()/60000)}`;
       if (['BUY', 'SELL'].includes(data.signal.finalSignal)) {
+        const workerSignalId = data.id || data.signalId;
         const bestTF = data.signal.bestTimeframe?.timeframe || '5min';
+        const localDedupeKey = `local-${data.pair}-${data.signal.finalSignal}-${bestTF}-${Math.floor(Date.now()/60000)}`;
+        const historyId = workerSignalId || localDedupeKey;
         const rec = data.signal.recommendations?.[bestTF as '5min'];
         const expiryMinutes = rec?.expiry?.totalMinutes;
+
+        if (!workerSignalId) {
+          console.warn('Signal response missing worker id; saving local-only history entry.', {
+            pair: data.pair,
+            direction: data.signal.finalSignal,
+            timeframe: bestTF,
+          });
+        }
+
         const newEntry: HistoryEntry = {
-          id: sigKey,
+          id: historyId,
           pair: data.pair,
           direction: data.signal.finalSignal,
           confidence: data.signal.confidence,
@@ -143,9 +165,10 @@ export default function App() {
           expiryMinutes,
           expiryTime: expiryMinutes ? Date.now() + expiryMinutes * 60000 : undefined,
           aiAgree: data.signal.aiValidation?.agrees,
+          reportable: Boolean(workerSignalId),
         };
         setHistory(prev => {
-          if (prev.find(h => h.id === sigKey)) return prev;
+          if (prev.find(h => h.id === historyId)) return prev;
           return [newEntry, ...prev].slice(0, 100);
         });
       }
@@ -206,17 +229,58 @@ export default function App() {
     };
   }, [autoRefresh, fetchSignal]);
 
-  const handleReport = (id: string, result: 'WIN' | 'LOSS') => {
-    setHistory(prev => prev.map(h => h.id === id ? { ...h, result } : h));
-    fetch(`${API_BASE}/api/report?id=${id}&result=${result}`).catch(() => {});
+  const reportSignalResult = useCallback(async (id: string, result: 'WIN' | 'LOSS') => {
+    const response = await fetch(`${API_BASE}/api/report?id=${encodeURIComponent(id)}&result=${result}`);
+    if (!response.ok) {
+      let body = '';
+      try { body = await response.text(); } catch {}
+      throw new Error(`Report failed (${response.status})${body ? `: ${body}` : ''}`);
+    }
+    return response.json().catch(() => null);
+  }, []);
+
+  const handleReport = async (id: string, result: 'WIN' | 'LOSS') => {
+    const entry = historyRef.current.find(h => h.id === id);
+    if (!entry) return;
+
+    if (entry.reportable === false) {
+      console.warn('Skipping report for local-only signal without worker id.', { id, result, pair: entry.pair });
+      setHistory(prev => prev.map(h => h.id === id ? {
+        ...h,
+        reportStatus: 'failed',
+        reportError: 'Server report unavailable: this history item has no worker signal ID.',
+      } : h));
+      return;
+    }
+
+    setHistory(prev => prev.map(h => h.id === id ? {
+      ...h,
+      result,
+      reportStatus: 'syncing',
+      reportError: undefined,
+    } : h));
+
+    try {
+      await reportSignalResult(id, result);
+      setHistory(prev => prev.map(h => h.id === id ? {
+        ...h,
+        reportStatus: 'synced',
+        reportError: undefined,
+      } : h));
+    } catch (e) {
+      console.warn('Failed to report signal result to worker.', { id, result, error: e });
+      setHistory(prev => prev.map(h => h.id === id ? {
+        ...h,
+        reportStatus: 'failed',
+        reportError: 'Server sync failed. Result saved locally only.',
+      } : h));
+    }
   };
 
   // Auto WIN/LOSS checker: every 30s, check PENDING entries whose expiry has
   // passed, fetch current price for that pair, and compare vs entry price.
   // Uses a ref for `history` so the interval is created ONCE, not re-created
   // every time history changes (which previously caused timer churn).
-  const historyRef = useRef(history);
-  historyRef.current = history;
 
   useEffect(() => {
     let cancelled = false;
@@ -251,8 +315,38 @@ export default function App() {
         else if (entry.direction === 'SELL' && movedUp) result = 'LOSS';
 
         if (result) {
-          setHistory(prev => prev.map(h => h.id === entry.id ? { ...h, result, autoChecked: true } : h));
-          fetch(`${API_BASE}/api/report?id=${entry.id}&result=${result}`).catch(() => {});
+          setHistory(prev => prev.map(h => h.id === entry.id ? {
+            ...h,
+            result,
+            autoChecked: true,
+            reportStatus: entry.reportable === false ? h.reportStatus : 'syncing',
+            reportError: undefined,
+          } : h));
+
+          if (entry.reportable === false) {
+            console.warn('Skipping auto report for local-only signal without worker id.', {
+              id: entry.id,
+              result,
+              pair: entry.pair,
+            });
+            return;
+          }
+
+          try {
+            await reportSignalResult(entry.id, result);
+            setHistory(prev => prev.map(h => h.id === entry.id ? {
+              ...h,
+              reportStatus: 'synced',
+              reportError: undefined,
+            } : h));
+          } catch (e) {
+            console.warn('Failed to auto-report signal result to worker.', { id: entry.id, result, error: e });
+            setHistory(prev => prev.map(h => h.id === entry.id ? {
+              ...h,
+              reportStatus: 'failed',
+              reportError: 'Auto result saved locally; server sync failed.',
+            } : h));
+          }
         }
       } catch {
         // silent — will retry next cycle
@@ -263,7 +357,7 @@ export default function App() {
 
     const interval = setInterval(checkExpired, 30000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  }, [reportSignalResult]);
 
   const pendingCount = history.filter(h => !h.result || h.result === 'PENDING').length;
   const wins = history.filter(h => h.result === 'WIN').length;
@@ -864,6 +958,7 @@ function MiniStat({ label, value, color }: { label: string; value: string | numb
 function HistoryRow({ entry, onReport, onDelete, isLast }: { entry: HistoryEntry; onReport: (id: string, result: 'WIN' | 'LOSS') => void; onDelete: (id: string) => void; isLast: boolean }) {
   const isBuy = entry.direction === 'BUY';
   const isPending = !entry.result || entry.result === 'PENDING';
+  const isReportable = entry.reportable !== false;
   const expiryPassed = entry.expiryTime && entry.expiryTime <= Date.now();
   const [pressing, setPressing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -980,7 +1075,29 @@ function HistoryRow({ entry, onReport, onDelete, isLast }: { entry: HistoryEntry
           </div>
         )}
       </div>
-      {isPending && (
+      {!isReportable && (
+        <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#ffb74d]/10 border border-[#ffb74d]/20 px-3 py-2 text-[11px] text-[#ffb74d]">
+          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+          <span>Local-only signal: server report is disabled because the worker did not return a signal ID.</span>
+        </div>
+      )}
+      {entry.reportStatus === 'syncing' && (
+        <div className="mt-2 rounded-xl bg-[#42a5f5]/10 border border-[#42a5f5]/20 px-3 py-2 text-[11px] text-[#42a5f5]">
+          Syncing result to server…
+        </div>
+      )}
+      {entry.reportStatus === 'synced' && (
+        <div className="mt-2 rounded-xl bg-[#81c784]/10 border border-[#81c784]/20 px-3 py-2 text-[11px] text-[#81c784]">
+          Server report synced.
+        </div>
+      )}
+      {entry.reportStatus === 'failed' && (
+        <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#ef5350]/10 border border-[#ef5350]/20 px-3 py-2 text-[11px] text-[#ffb4ab]">
+          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+          <span>{entry.reportError || 'Server report failed.'}</span>
+        </div>
+      )}
+      {isPending && isReportable && (
         <div className="flex gap-2 mt-2">
           <button onClick={() => onReport(entry.id, 'WIN')} className="flex-1 py-2 rounded-xl bg-[#81c784]/15 text-[#81c784] font-medium text-xs flex items-center justify-center gap-1 active:scale-95 transition-transform"><CheckCircle2 className="w-3.5 h-3.5" />WIN</button>
           <button onClick={() => onReport(entry.id, 'LOSS')} className="flex-1 py-2 rounded-xl bg-[#ef5350]/15 text-[#ef5350] font-medium text-xs flex items-center justify-center gap-1 active:scale-95 transition-transform"><XCircle className="w-3.5 h-3.5" />LOSS</button>
