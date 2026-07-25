@@ -16,9 +16,21 @@ export interface ScannerResult {
   consumed?: boolean;
 }
 
+interface BatchResponse {
+  batch?: boolean;
+  requestedPairs?: number;
+  processedPairs?: number;
+  cappedAt?: number;
+  invalidPairs?: string[];
+  skippedPairs?: string[];
+  results?: Record<string, SignalData | { error?: string; message?: string }>;
+  timestamp?: string;
+}
+
 const STORAGE_KEY = 'ftt_scanner_pairs';
 const SEEN_KEY = 'ftt_scanner_seen'; // map pair -> last consumed signalKey
 const DEFAULT_PAIRS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'XAU/USD', 'EURUSD-OTC'];
+const BATCH_MAX_PAIRS = 3;
 
 function loadPairs(): string[] {
   try {
@@ -40,6 +52,36 @@ function loadSeen(): Record<string, string> {
 
 function saveSeen(seen: Record<string, string>) {
   try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch {}
+}
+
+function normalizePairKey(pair: string) {
+  return pair.toUpperCase().replace(/[\s/_-]/g, '');
+}
+
+function chunkPairs(pairList: string[], size: number) {
+  const chunks: string[][] = [];
+  for (let i = 0; i < pairList.length; i += size) chunks.push(pairList.slice(i, i + size));
+  return chunks;
+}
+
+function cleanPairForSignal(pair: string) {
+  return pair.replace(/\//g, '').toLowerCase();
+}
+
+function isBatchError(value: SignalData | { error?: string; message?: string }): value is { error?: string; message?: string } {
+  return !!value && typeof value === 'object' && 'error' in value && !('signal' in value);
+}
+
+function findBatchResult(
+  results: Record<string, SignalData | { error?: string; message?: string }>,
+  localPair: string
+) {
+  const localKey = normalizePairKey(localPair);
+  return Object.entries(results).find(([resultKey, value]) => {
+    const keyMatches = normalizePairKey(resultKey) === localKey;
+    const valuePair = typeof (value as SignalData).pair === 'string' ? (value as SignalData).pair : '';
+    return keyMatches || (valuePair ? normalizePairKey(valuePair) === localKey : false);
+  });
 }
 
 interface UseScannerOptions {
@@ -81,73 +123,134 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
     });
   }, []);
 
+  const setPairError = useCallback((pair: string) => {
+    setResults(prev => ({ ...prev, [pair]: { ...prev[pair], pair, status: 'error', updatedAt: Date.now() } }));
+  }, []);
+
+  const applySignalData = useCallback((localPair: string, data: SignalData) => {
+    const direction = data.signal?.finalSignal || (data.marketStatus === 'CLOSED' ? 'NO_TRADE' : undefined);
+    if (!direction) {
+      setPairError(localPair);
+      return;
+    }
+
+    const bestTF = data.signal?.bestTimeframe?.timeframe || '5min';
+    // Intentionally keep this as a local notification de-dupe key only.
+    // Scanner results are not used for /api/report; reportable history IDs come from App.tsx.
+    const signalKey = data.signal && ['BUY', 'SELL'].includes(direction)
+      ? `${data.pair}-${direction}-${bestTF}-${Math.floor(Date.now() / 60000)}`
+      : undefined;
+
+    const result: ScannerResult = {
+      pair: localPair,
+      status: 'ok',
+      signal: direction as ScannerResult['signal'],
+      confidence: data.signal?.confidence,
+      grade: data.signal?.grade?.grade,
+      timeframe: data.signal ? bestTF : undefined,
+      signalKey,
+      updatedAt: Date.now(),
+    };
+
+    setResults(prev => ({ ...prev, [localPair]: result }));
+
+    // Notify only for fresh BUY/SELL signals not yet seen for this pair
+    if (data.signal && signalKey && ['BUY', 'SELL'].includes(direction)) {
+      const lastSeen = seenRef.current[localPair];
+      if (lastSeen !== signalKey) {
+        fireSignalNotification(
+          {
+            pair: data.pair,
+            direction: direction as 'BUY' | 'SELL',
+            confidence: data.signal.confidence,
+            timeframe: bestTF,
+            grade: data.signal.grade?.grade,
+          },
+          () => {
+            // Mark as consumed so it won't re-notify, then navigate
+            seenRef.current = { ...seenRef.current, [localPair]: signalKey };
+            saveSeen(seenRef.current);
+            setResults(prevR => ({
+              ...prevR,
+              [localPair]: { ...prevR[localPair], consumed: true },
+            }));
+            onSignalClickRef.current(data.pair);
+          }
+        );
+        // Mark as "shown but not yet consumed" so the in-app list can also
+        // dedupe the sound on subsequent polls even before user clicks.
+        seenRef.current = { ...seenRef.current, [localPair]: signalKey };
+        saveSeen(seenRef.current);
+      }
+    }
+  }, [setPairError]);
+
   const fetchOne = useCallback(async (pair: string) => {
     setResults(prev => ({ ...prev, [pair]: { ...prev[pair], pair, status: 'loading' } }));
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 12000);
     try {
-      const cleanPair = pair.replace('/', '').toLowerCase();
-      const res = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
+      const cleanPair = cleanPairForSignal(pair);
+      const res = await fetch(`${API_BASE}/api/signal?pair=${encodeURIComponent(cleanPair)}`, { signal: controller.signal });
       if (!res.ok) throw new Error('net');
       const data: SignalData = await res.json();
-      if (!data?.signal) throw new Error('invalid');
-
-      const direction = data.signal.finalSignal;
-      const bestTF = data.signal.bestTimeframe?.timeframe || '5min';
-      // Intentionally keep this as a local notification de-dupe key only.
-      // Scanner results are not used for /api/report; reportable history IDs come from App.tsx.
-      const signalKey = ['BUY', 'SELL'].includes(direction)
-        ? `${data.pair}-${direction}-${bestTF}-${Math.floor(Date.now() / 60000)}`
-        : undefined;
-
-      const result: ScannerResult = {
-        pair,
-        status: 'ok',
-        signal: direction,
-        confidence: data.signal.confidence,
-        grade: data.signal.grade?.grade,
-        timeframe: bestTF,
-        signalKey,
-        updatedAt: Date.now(),
-      };
-
-      setResults(prev => ({ ...prev, [pair]: result }));
-
-      // Notify only for fresh BUY/SELL signals not yet seen for this pair
-      if (signalKey && ['BUY', 'SELL'].includes(direction)) {
-        const lastSeen = seenRef.current[pair];
-        if (lastSeen !== signalKey) {
-          fireSignalNotification(
-            {
-              pair: data.pair,
-              direction: direction as 'BUY' | 'SELL',
-              confidence: data.signal.confidence,
-              timeframe: bestTF,
-              grade: data.signal.grade?.grade,
-            },
-            () => {
-              // Mark as consumed so it won't re-notify, then navigate
-              seenRef.current = { ...seenRef.current, [pair]: signalKey };
-              saveSeen(seenRef.current);
-              setResults(prevR => ({
-                ...prevR,
-                [pair]: { ...prevR[pair], consumed: true },
-              }));
-              onSignalClickRef.current(data.pair);
-            }
-          );
-          // Mark as "shown but not yet consumed" so the in-app list can also
-          // dedupe the sound on subsequent polls even before user clicks.
-          seenRef.current = { ...seenRef.current, [pair]: signalKey };
-          saveSeen(seenRef.current);
-        }
-      }
+      applySignalData(pair, data);
     } catch {
-      setResults(prev => ({ ...prev, [pair]: { ...prev[pair], pair, status: 'error', updatedAt: Date.now() } }));
+      setPairError(pair);
     } finally {
       clearTimeout(timeoutId);
     }
-  }, []);
+  }, [applySignalData, setPairError]);
+
+  const fetchBatchGroup = useCallback(async (group: string[]) => {
+    setResults(prev => {
+      const next = { ...prev };
+      for (const pair of group) next[pair] = { ...next[pair], pair, status: 'loading' };
+      return next;
+    });
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    try {
+      const params = new URLSearchParams({ pairs: group.join(',') });
+      const res = await fetch(`${API_BASE}/api/batch?${params.toString()}`, { signal: controller.signal });
+      if (!res.ok) throw new Error('batch');
+      const batch: BatchResponse = await res.json();
+      const batchResults = batch.results || {};
+      const invalidKeys = new Set((batch.invalidPairs || []).map(normalizePairKey));
+      const skippedKeys = new Set((batch.skippedPairs || []).map(normalizePairKey));
+      const fallbackPairs: string[] = [];
+
+      for (const pair of group) {
+        const pairKey = normalizePairKey(pair);
+        if (invalidKeys.has(pairKey) || skippedKeys.has(pairKey)) {
+          fallbackPairs.push(pair);
+          continue;
+        }
+
+        const matched = findBatchResult(batchResults, pair);
+        if (!matched) {
+          fallbackPairs.push(pair);
+          continue;
+        }
+
+        const [, value] = matched;
+        if (isBatchError(value)) {
+          setPairError(pair);
+        } else {
+          applySignalData(pair, value);
+        }
+      }
+
+      if (fallbackPairs.length > 0) {
+        await Promise.all(fallbackPairs.map(pair => fetchOne(pair)));
+      }
+    } catch {
+      for (const pair of group) setPairError(pair);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }, [applySignalData, fetchOne, setPairError]);
 
   const scanningRef = useRef(false);
 
@@ -156,14 +259,15 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
     if (scanningRef.current) return; // prevent overlapping scans
     scanningRef.current = true;
     setScanning(true);
-    // sequential to be gentle on the API
-    for (const pair of pairs) {
-      await fetchOne(pair);
+    try {
+      const chunks = chunkPairs(pairs, BATCH_MAX_PAIRS);
+      await Promise.all(chunks.map(group => fetchBatchGroup(group)));
+    } finally {
+      scanningRef.current = false;
+      setScanning(false);
+      setCountdown(intervalMs / 1000);
     }
-    scanningRef.current = false;
-    setScanning(false);
-    setCountdown(intervalMs / 1000);
-  }, [pairs, fetchOne, intervalMs]);
+  }, [pairs, fetchBatchGroup, intervalMs]);
 
   // Request notification permission once on mount
   useEffect(() => {

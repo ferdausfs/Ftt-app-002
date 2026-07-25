@@ -59,6 +59,24 @@ type TradableSignalData = SignalData & {
   session: NonNullable<SignalData['session']>;
 };
 
+interface ServerPairStats {
+  pair: string;
+  totalSignals?: number;
+  wins?: number;
+  losses?: number;
+  winRate?: number;
+  sampleSize?: number;
+  lastUpdated?: string;
+  dynamicConfidenceAdjustment?: number;
+}
+
+interface ServerStatsState {
+  pair: string;
+  loading: boolean;
+  stats: ServerPairStats | null;
+  message?: string;
+}
+
 type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner';
 
 export default function App() {
@@ -99,6 +117,7 @@ export default function App() {
   const [selectedIndicatorTF, setSelectedIndicatorTF] = useState('5min');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshCountdown, setRefreshCountdown] = useState(60);
+  const [serverStatsState, setServerStatsState] = useState<ServerStatsState | null>(null);
 
   const historyRef = useRef<HistoryEntry[]>(history);
   historyRef.current = history;
@@ -363,6 +382,52 @@ export default function App() {
     const interval = setInterval(checkExpired, 30000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [reportSignalResult]);
+
+  useEffect(() => {
+    if (activeTab !== 'history') return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    setServerStatsState(prev => ({
+      pair: selectedPair,
+      loading: true,
+      stats: prev?.pair === selectedPair ? prev.stats : null,
+      message: prev?.pair === selectedPair ? prev.message : undefined,
+    }));
+
+    const fetchServerStats = async () => {
+      try {
+        const cleanPair = selectedPair.replace(/\//g, '').toLowerCase();
+        const response = await fetch(`${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair)}`, { signal: controller.signal });
+        if (!response.ok) throw new Error('stats');
+        const payload: { pair?: string; stats?: ServerPairStats | null; message?: string } = await response.json();
+        if (cancelled) return;
+        setServerStatsState({
+          pair: payload.pair || selectedPair,
+          loading: false,
+          stats: payload.stats || null,
+          message: payload.message,
+        });
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('Server stats fetch failed; hiding section.', { pair: selectedPair, error: e });
+          setServerStatsState(null);
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    fetchServerStats();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearTimeout(timeoutId);
+    };
+  }, [activeTab, selectedPair]);
 
   const pendingCount = history.filter(h => !h.result || h.result === 'PENDING').length;
   const wins = history.filter(h => h.result === 'WIN').length;
@@ -683,12 +748,18 @@ export default function App() {
             </div>
             
             {/* Stats */}
+            <div className="flex items-center justify-between mb-2 px-1">
+              <h3 className="text-xs uppercase tracking-wider text-[#8e9099] font-medium">Your Local History</h3>
+              <span className="text-[10px] text-[#6e6e73]">This device only</span>
+            </div>
             <div className="grid grid-cols-4 gap-2 mb-4">
               <StatCard label="Total" value={history.length} color="#42a5f5" />
               <StatCard label="Wins" value={wins} color="#81c784" />
               <StatCard label="Losses" value={losses} color="#ef5350" />
               <StatCard label="Win %" value={`${winRate}%`} color="#ffb74d" />
             </div>
+
+            <ServerStatsCard state={serverStatsState} selectedPair={selectedPair} />
 
             {/* List */}
             <div className="md-surface overflow-hidden">
@@ -866,6 +937,76 @@ function MarketClosedCard({ data, onSwitchPair }: { data: SignalData; onSwitchPa
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function formatServerWinRate(value?: number) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '—';
+  const pct = value <= 1 ? value * 100 : value;
+  return `${pct.toFixed(1)}%`;
+}
+
+function ServerStatsCard({ state, selectedPair }: { state: ServerStatsState | null; selectedPair: string }) {
+  if (!state) return null;
+
+  const stats = state.stats;
+  const hasStats = !!stats;
+  const lastUpdated = stats?.lastUpdated ? new Date(stats.lastUpdated) : null;
+  const lastUpdatedLabel = lastUpdated && !Number.isNaN(lastUpdated.getTime())
+    ? lastUpdated.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null;
+
+  return (
+    <div className="md-surface p-4 mb-4 border border-[#42a5f5]/10">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-[#42a5f5]/15 flex items-center justify-center">
+            <BarChart3 className="w-4 h-4 text-[#42a5f5]" />
+          </div>
+          <div>
+            <div className="text-sm font-medium">Server Win Rate</div>
+            <div className="text-xs text-[#8e9099]">All users · {state.pair || selectedPair}</div>
+          </div>
+        </div>
+        {state.loading && <RefreshCw className="w-4 h-4 text-[#42a5f5] animate-spin" />}
+      </div>
+
+      {state.loading && !hasStats ? (
+        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8]">Loading server stats…</div>
+      ) : hasStats ? (
+        <>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-[#1e1e23] rounded-xl p-3">
+              <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">Server Win %</div>
+              <div className="text-lg font-medium number-tabular text-[#4dd0e1]">{formatServerWinRate(stats.winRate)}</div>
+            </div>
+            <div className="bg-[#1e1e23] rounded-xl p-3">
+              <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">Signals</div>
+              <div className="text-lg font-medium number-tabular">{stats.totalSignals ?? '—'}</div>
+            </div>
+            <div className="bg-[#1e1e23] rounded-xl p-3">
+              <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">W / L</div>
+              <div className="text-lg font-medium number-tabular">
+                <span className="text-[#81c784]">{stats.wins ?? 0}</span>
+                <span className="text-[#6e6e73]"> / </span>
+                <span className="text-[#ef5350]">{stats.losses ?? 0}</span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-[#6e6e73]">
+            {typeof stats.sampleSize === 'number' && <span>Lookback sample: {stats.sampleSize}</span>}
+            {typeof stats.dynamicConfidenceAdjustment === 'number' && (
+              <span>· Confidence adj: {stats.dynamicConfidenceAdjustment > 0 ? '+' : ''}{stats.dynamicConfidenceAdjustment}</span>
+            )}
+            {lastUpdatedLabel && <span>· Updated {lastUpdatedLabel}</span>}
+          </div>
+        </>
+      ) : (
+        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8]">
+          {state.message || 'No server stats yet for this pair.'}
+        </div>
+      )}
     </div>
   );
 }

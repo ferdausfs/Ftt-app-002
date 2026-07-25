@@ -1,5 +1,32 @@
 # AGENT_LOG
 
+## 2026-07-25 — Phase 2 scanner batching + server stats
+
+### Scope
+- App-only Phase 2 endpoint wiring.
+- Implemented scanner `/api/batch` usage and History tab `/api/stats` server win-rate display.
+- Did not wire `/api/history` or `/api/pairs`.
+- Worker repo was not changed.
+
+### Changes
+- Reworked `src/hooks/useScanner.ts` so `scanAll()` chunks scanner pairs in groups of 3 and runs `/api/batch?pairs=...` calls in parallel instead of sequential single-pair calls.
+- Added normalized pair matching for batch result keys so local keys like `EURUSD-OTC` can match worker-normalized keys like `EUR/USD-OTC`.
+- Added fallback handling for missing, invalid, or skipped batch entries: invalid/skipped pairs fall back through the existing single-pair `/api/signal` flow, and full batch network failures mark every pair in that group as `error`.
+- Preserved scanner notification de-dupe and consumed state behavior by sharing the same signal-result processing path for batch and single-pair fallback results.
+- Added History tab server stats fetch for the currently selected pair only, and only while the History tab is active.
+- Added a small Server Win Rate section labeled separately from local device-only history stats; failed/slow stats calls are caught and the server section is hidden without breaking the History tab.
+
+### Verification
+- Live default scanner chunks verified as 6 pairs → 2 batch calls instead of 6 sequential calls.
+- Batch chunk 1 returned `HTTP/2 200`, `processedPairs: 3`, result keys `EUR/USD`, `GBP/USD`, `USD/JPY`.
+- Batch chunk 2 returned `HTTP/2 200`, result keys `AUD/USD`, `EUR/USD-OTC`, and `invalidPairs: ['XAU/USD']`; invalid pairs are handled through fallback/single-pair error state instead of being silently dropped.
+- Deliberate invalid batch `BTC/USD,NOTAPAIR,ETH/USD` returned `invalidPairs: ['NOTAPAIR']`, confirming invalid handling path.
+- Deliberate 4-pair batch returned `skippedPairs: ['GBP/USD']`, confirming skipped-pair condition that the app falls back for if encountered.
+- Live `/api/stats?pair=btcusd` returned `HTTP/2 200` with stats: `totalSignals: 283`, `wins: 127`, `losses: 156`, `winRate: 0.449`, `sampleSize: 20`, `dynamicConfidenceAdjustment: -5`.
+- Live `/api/stats?pair=notapair` returned `HTTP/2 400`; app code treats non-OK stats responses as catchable failures and hides the server stats section.
+- `npx tsc --noEmit` passed.
+- `npm run build` passed and printed `✓ built in 2.69s`.
+
 ## 2026-07-25 — Premium Market Closed UI state
 
 ### Scope
