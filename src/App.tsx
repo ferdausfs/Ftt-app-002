@@ -37,6 +37,10 @@ import {
 } from './utils/signalMeta';
 import { FilterChipRow } from './components/FilterChipRow';
 import {
+  CachedSignalData, fetchCachedSignal, fetchFreshSignal, freshnessBadge,
+  computeRefreshDelayMs, formatCountdown, DEFAULT_REFRESH_SECONDS,
+} from './utils/signalCache';
+import {
   ServerWrFilter, DEFAULT_SERVER_WR_FILTER, SERVER_WR_FILTER_KEY,
   parseServerWrFilter, sameFilter, windowCutoff, filterSubtitle, filterCacheKey,
   aggregateAllPairs, countWindowed, combineWindowed, TIME_RANGE_LABEL,
@@ -188,6 +192,11 @@ export default function App() {
   const historyRef = useRef<HistoryEntry[]>(history);
   historyRef.current = history;
 
+  // Auto-refresh: timestamp-based (not tick-counter-based) so it's resilient to
+  // the tab/screen being backgrounded for a long time. Phase 8 re-points this at
+  // the worker's own scan cycle after every successful fetch.
+  const nextRefreshAtRef = useRef<number>(Date.now() + DEFAULT_REFRESH_SECONDS * 1000);
+
   const fetchAbortRef = useRef<AbortController | null>(null);
   const fetchInFlightRef = useRef(false);
   // Monotonic id: only the newest request is allowed to write state. Guards
@@ -195,7 +204,12 @@ export default function App() {
   // would otherwise show stale data).
   const fetchSeqRef = useRef(0);
 
-  const fetchSignal = useCallback(async (silent = false) => {
+  /**
+   * Phase 8 — normal views read the Phase 7 worker cache; Force Refresh runs
+   * the engine. Every Phase 5 guard (abort-and-supersede, seq check, 25s
+   * timeout, conditional finally) is preserved exactly.
+   */
+  const fetchSignal = useCallback(async (silent = false, forceFresh = false) => {
     // BUG #1 fix: previously this early-returned whenever a fetch was in
     // flight, so tapping Retry during a slow request did *nothing* — no
     // spinner, no error, no request. The user read that as "button dead".
@@ -217,10 +231,12 @@ export default function App() {
     setError(null);
     const requestedPair = selectedPair;
     try {
-      const cleanPair = requestedPair.replace('/', '').toLowerCase();
-      const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
-      if (!response.ok) throw new Error('Network error');
-      const data: SignalData = await response.json();
+      const deps = { apiBase: API_BASE, signal: controller.signal };
+      // Cache read costs the backend nothing; a fresh run costs an engine pass.
+      const outcome = forceFresh
+        ? await fetchFreshSignal(requestedPair, deps)
+        : await fetchCachedSignal(requestedPair, deps);
+      const data: CachedSignalData = outcome.data;
 
       const isMarketClosedResponse = data?.marketStatus === 'CLOSED' && data.signal === null;
       if (!data?.marketStatus || (!data.signal && !isMarketClosedResponse)) {
@@ -239,7 +255,11 @@ export default function App() {
 
       setSignalData(data);
       setLastUpdated(new Date());
-      setRefreshCountdown(60);
+      // Phase 8: sync the visible countdown with the worker's scan cycle when
+      // it told us one; otherwise keep the legacy fixed interval.
+      const serverNext = typeof data.nextRefreshIn === 'number' ? data.nextRefreshIn : null;
+      setRefreshCountdown(serverNext !== null ? Math.max(1, serverNext) : DEFAULT_REFRESH_SECONDS);
+      nextRefreshAtRef.current = Date.now() + computeRefreshDelayMs(serverNext);
 
       if (data.signal && ['BUY', 'SELL'].includes(data.signal.finalSignal)) {
         const workerSignalId = data.id || data.signalId;
@@ -325,22 +345,23 @@ export default function App() {
     try { localStorage.setItem('ftt_selected_pair', selectedPair); } catch {}
   }, [selectedPair]);
 
-  // Auto-refresh: timestamp-based (not tick-counter-based) so it's resilient
-  // to the tab/screen being backgrounded for a long time. When the page
-  // becomes visible again, we immediately check if a refresh is overdue.
-  const nextRefreshAtRef = useRef<number>(Date.now() + 60000);
-
   useEffect(() => {
     if (!autoRefresh) return;
 
-    nextRefreshAtRef.current = Date.now() + 60000;
+    // Phase 8: do NOT reset the schedule here. fetchSignal() already set it from
+    // the worker's `nextRefreshIn`; overwriting it with a flat 60s would undo
+    // the cron sync on every re-render of this effect.
+    if (nextRefreshAtRef.current <= Date.now()) {
+      nextRefreshAtRef.current = Date.now() + DEFAULT_REFRESH_SECONDS * 1000;
+    }
 
     const tick = () => {
       const now = Date.now();
       const remaining = nextRefreshAtRef.current - now;
       if (remaining <= 0) {
-        nextRefreshAtRef.current = now + 60000;
-        setRefreshCountdown(60);
+        // Provisional next slot; the fetch response will re-point it precisely.
+        nextRefreshAtRef.current = now + DEFAULT_REFRESH_SECONDS * 1000;
+        setRefreshCountdown(DEFAULT_REFRESH_SECONDS);
         fetchSignal(true);
       } else {
         setRefreshCountdown(Math.max(1, Math.ceil(remaining / 1000)));
@@ -744,15 +765,28 @@ export default function App() {
               {autoRefresh && (
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-[#1e1e23] rounded-full">
                   <div className="w-2 h-2 rounded-full bg-[#81c784] animate-pulse" />
-                  <span className="text-xs text-[#b0b3b8] font-medium number-tabular">{refreshCountdown}s</span>
+                  <span className="text-xs text-[#b0b3b8] font-medium number-tabular">{formatCountdown(refreshCountdown)}</span>
                 </div>
               )}
-              <button 
+              {/* Cache re-read: cheap, instant, costs the backend nothing. */}
+              <button
                 onClick={() => fetchSignal()}
                 disabled={loading}
+                title="Refresh from cache"
+                aria-label="Refresh from cache"
                 className="w-10 h-10 rounded-full bg-[#1e1e23] flex items-center justify-center active:scale-90 transition-transform"
               >
                 <RefreshCw className={cn("w-5 h-5", loading && "animate-spin")} />
+              </button>
+              {/* Force Refresh: runs the engine on demand (spec §A.4.2). */}
+              <button
+                onClick={() => fetchSignal(false, true)}
+                disabled={loading}
+                title="Force refresh — run the engine now"
+                aria-label="Force refresh"
+                className="w-10 h-10 rounded-full bg-[#ffb74d]/15 flex items-center justify-center active:scale-90 transition-transform"
+              >
+                <Zap className={cn("w-5 h-5 text-[#ffb74d]", loading && "animate-pulse")} />
               </button>
             </div>
           </div>
@@ -1387,6 +1421,8 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
   const coreConfidence = data.signal.coreConfidence;
   const structureOverall = data.signal.structureVerdict?.overall;
   const aiBadge = aiStatusBadge(deriveAiStatus(data));
+  const cacheMeta = data as CachedSignalData;
+  const freshness = freshnessBadge(cacheMeta);
 
   return (
     <div className="md-surface-highest p-0 overflow-hidden scale-in">
@@ -1434,6 +1470,28 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
           </div>
           {best?.timeframe && <div className="px-3 py-1.5 bg-[#323238] rounded-lg text-xs font-medium flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />{best.timeframe}</div>}
         </div>
+
+        {/* ── Phase 8: cache freshness ── */}
+        {freshness && (
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <div className={cn("px-2.5 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1.5", freshness.className)}>
+              {freshness.kind === 'live'
+                ? <Zap className="w-3 h-3" />
+                : freshness.kind === 'on_demand'
+                  ? <AlertCircle className="w-3 h-3" />
+                  : <Clock className="w-3 h-3" />}
+              {freshness.label}
+            </div>
+            {freshness.detail && (
+              <span className="text-[11px] text-[#6e6e73]">{freshness.detail}</span>
+            )}
+            {cacheMeta.generationId && (
+              <span className="text-[10px] text-[#4a4a4f] font-mono" title={'Generation ' + cacheMeta.generationId}>
+                {cacheMeta.generationId.slice(-6)}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* ── B5 instrumentation badges (backend v6.9.2) ── */}
         <div className="flex items-center gap-2 mb-4 flex-wrap">

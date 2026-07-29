@@ -1,20 +1,20 @@
-diff --git a/scripts/phase6_smoke.mjs b/scripts/phase6_smoke.mjs
+diff --git a/scripts/phase8_smoke.mjs b/scripts/phase8_smoke.mjs
 new file mode 100644
-index 0000000..7a22d4c
+index 0000000..66cb11d
 --- /dev/null
-+++ b/scripts/phase6_smoke.mjs
-@@ -0,0 +1,296 @@
++++ b/scripts/phase8_smoke.mjs
+@@ -0,0 +1,239 @@
 +/**
-+ * Phase 6 smoke tests — node scripts/phase6_smoke.mjs
++ * Phase 8 smoke tests — node scripts/phase8_smoke.mjs
 + *
-+ * Covers the Server Win Rate filter logic:
-+ *   - filter persistence / defensive parsing
-+ *   - All Pairs aggregation maths
-+ *   - date-window cutoffs (local midnight, 168h)
-+ *   - /api/history payload shape tolerance (Phase 5 regression guard)
-+ *   - the 50-row retention cap that makes windowed counts a lower bound
++ * Covers the cache-routing logic and the regressions that matter:
++ *   - cache hit / fresh / 404-fallback routing (with call-by-call URL asserts)
++ *   - freshness badge for all three states
++ *   - timer sync maths against real observed nextRefreshIn values
++ *   - scanner cache-first with batch fallback for uncovered pairs
++ *   - Phase 5 + Phase 6 features still wired
 + *
-+ * No DOM, no network. Helpers are imported from the real source.
++ * No DOM, no network.
 + */
 +
 +import { readFileSync } from 'node:fs';
@@ -28,19 +28,9 @@ index 0000000..7a22d4c
 +
 +let pass = 0, fail = 0;
 +const failures = [];
-+function ok(name, cond, detail) {
-+  if (cond) { pass++; console.log('PASS  ' + name); }
-+  else { fail++; failures.push(name); console.log('FAIL  ' + name + (detail ? ' — ' + detail : '')); }
-+}
-+function eq(name, a, b) {
-+  ok(name, JSON.stringify(a) === JSON.stringify(b),
-+     'expected ' + JSON.stringify(b) + ', got ' + JSON.stringify(a));
-+}
-+function close(name, a, b, tol = 1e-9) {
-+  ok(name, Math.abs(a - b) <= tol, 'expected ~' + b + ', got ' + a);
-+}
++const ok = (n, c, d) => { if (c) { pass++; console.log('PASS  ' + n); } else { fail++; failures.push(n); console.log('FAIL  ' + n + (d ? ' — ' + d : '')); } };
++const eq = (n, a, b) => ok(n, JSON.stringify(a) === JSON.stringify(b), 'expected ' + JSON.stringify(b) + ', got ' + JSON.stringify(a));
 +
-+// ── load real TS helpers (types erased, imports resolved manually) ─────
 +const cache = new Map();
 +function loadModule(relPath) {
 +  if (cache.has(relPath)) return cache.get(relPath);
@@ -53,1044 +43,669 @@ index 0000000..7a22d4c
 +  const dir = path.dirname(relPath);
 +  const require = (id) => {
 +    if (!id.startsWith('.')) return {};
-+    const resolved = path.normalize(path.join(dir, id)).replace(/\.js$/, '') + '.ts';
-+    return loadModule(resolved);
++    return loadModule(path.normalize(path.join(dir, id)) + '.ts');
 +  };
-+  const fn = new vm.Script(`(function(module,exports,require){${js}\n})`).runInThisContext();
-+  fn(module, module.exports, require);
++  new vm.Script(`(function(module,exports,require){${js}\n})`).runInThisContext()(module, module.exports, require);
 +  cache.set(relPath, module.exports);
 +  return module.exports;
 +}
 +
-+const wr = loadModule('src/utils/serverWr.ts');
++const sc = loadModule('src/utils/signalCache.ts');
 +
-+console.log('── filter persistence & parsing ───────────────────────────');
-+{
-+  eq('default filter matches pre-Phase-6 behaviour',
-+     wr.DEFAULT_SERVER_WR_FILTER, { pairScope: 'selected', timeRange: 'all' });
-+  eq('localStorage key', wr.SERVER_WR_FILTER_KEY, 'ftt_server_wr_filter');
-+
-+  eq('round-trips a saved value',
-+     wr.parseServerWrFilter('{"pairScope":"all","timeRange":"7d"}'),
-+     { pairScope: 'all', timeRange: '7d' });
-+  eq('accepts an object as well as a string',
-+     wr.parseServerWrFilter({ pairScope: 'all', timeRange: 'today' }),
-+     { pairScope: 'all', timeRange: 'today' });
-+
-+  // a stale or hand-edited value must never crash the History tab
-+  eq('malformed JSON -> default', wr.parseServerWrFilter('{nope'), wr.DEFAULT_SERVER_WR_FILTER);
-+  eq('null -> default', wr.parseServerWrFilter(null), wr.DEFAULT_SERVER_WR_FILTER);
-+  eq('unknown scope value -> default scope',
-+     wr.parseServerWrFilter('{"pairScope":"hackers","timeRange":"7d"}'),
-+     { pairScope: 'selected', timeRange: '7d' });
-+  eq('unknown range value -> default range',
-+     wr.parseServerWrFilter('{"pairScope":"all","timeRange":"decade"}'),
-+     { pairScope: 'all', timeRange: 'all' });
-+
-+  ok('sameFilter true for equal', wr.sameFilter({ pairScope: 'all', timeRange: '7d' }, { pairScope: 'all', timeRange: '7d' }));
-+  ok('sameFilter false for differing', !wr.sameFilter({ pairScope: 'all', timeRange: '7d' }, { pairScope: 'all', timeRange: 'today' }));
-+  ok('sameFilter false for null', !wr.sameFilter(null, { pairScope: 'all', timeRange: '7d' }));
-+
-+  // cache key must separate per-pair views but not duplicate the all-pairs one
-+  ok('cache key is pair-specific for selected scope',
-+     wr.filterCacheKey({ pairScope: 'selected', timeRange: 'all' }, 'EUR/USD')
-+     !== wr.filterCacheKey({ pairScope: 'selected', timeRange: 'all' }, 'BTC/USD'));
-+  eq('cache key ignores pair for all scope',
-+     wr.filterCacheKey({ pairScope: 'all', timeRange: '7d' }, 'EUR/USD'),
-+     wr.filterCacheKey({ pairScope: 'all', timeRange: '7d' }, 'BTC/USD'));
-+}
-+
-+console.log('\n── All Pairs aggregation (spec §3.1 formula) ──────────────');
-+{
-+  // real shape from the live /api/stats index
-+  const pairs = [
-+    { pair: 'SOL/USD', wins: 11, losses: 5, totalSignals: 16, lastUpdated: '2026-07-21T01:26:22.248Z' },
-+    { pair: 'EUR/USD', wins: 5, losses: 3, totalSignals: 8, lastUpdated: '2026-07-29T02:00:00.000Z' },
-+    { pair: 'BTC/USD', wins: 183, losses: 208, totalSignals: 391, lastUpdated: '2026-07-28T05:00:09.946Z' },
-+  ];
-+  const agg = wr.aggregateAllPairs(pairs);
-+  eq('total wins summed', agg.totalWins, 199);
-+  eq('total losses summed', agg.totalLosses, 216);
-+  eq('decided denominator = wins + losses', agg.totalSignals, 415);
-+  close('aggregate win rate', agg.winRate, 199 / 415);
-+  eq('pair count', agg.pairCount, 3);
-+  eq('lastUpdated = most recent contributor', agg.lastUpdated, '2026-07-29T02:00:00.000Z');
-+  eq('pairCount counts only contributing pairs', agg.pairCount, 3);
-+
-+  // robustness
-+  const messy = wr.aggregateAllPairs([
-+    { pair: 'A/B' },                                   // no counters at all
-+    { pair: 'C/D', wins: null, losses: undefined },    // nulls
-+    { pair: 'E/F', wins: '4', losses: '1' },           // strings from JSON
-+  ]);
-+  eq('missing/null counters treated as 0 and excluded', messy.pairCount, 1);
-+  eq('numeric strings coerced', messy.totalWins, 4);
-+  eq('empty list -> zero, not NaN', wr.aggregateAllPairs([]).winRate, 0);
-+  eq('zero decided -> WR 0 not NaN', wr.aggregateAllPairs([{ pair: 'X/Y', wins: 0, losses: 0 }]).winRate, 0);
-+}
-+
-+console.log('\n── date cutoffs (spec §3.3) ───────────────────────────────');
-+{
-+  const now = new Date('2026-07-29T14:30:00Z').getTime();
-+  eq('all time -> 0 (no cutoff)', wr.windowCutoff('all', now), 0);
-+
-+  const sevenD = wr.windowCutoff('7d', now);
-+  eq('7d cutoff is exactly 168h back', now - sevenD, 7 * 24 * 60 * 60 * 1000);
-+
-+  const today = wr.windowCutoff('today', now);
-+  const d = new Date(today);
-+  ok('today cutoff is local midnight',
-+     d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0 && d.getMilliseconds() === 0,
-+     d.toString());
-+  ok('today cutoff is not in the future', today <= now);
-+  ok('today cutoff is within the last 24h', now - today < 24 * 60 * 60 * 1000);
-+  ok('today is more recent than 7d', today > sevenD);
-+}
-+
-+console.log('\n── windowed counting from /api/history ────────────────────');
-+{
-+  const now = Date.now();
-+  const hoursAgo = h => new Date(now - h * 3600 * 1000).toISOString();
-+  const payload = {
-+    pair: 'BTC/USD', total: 6, showing: 6,
-+    signals: [
-+      { id: '1', timestamp: hoursAgo(1), result: 'WIN' },
-+      { id: '2', timestamp: hoursAgo(2), result: 'LOSS' },
-+      { id: '3', timestamp: hoursAgo(3), result: 'UNKNOWN' },   // must not count
-+      { id: '4', timestamp: hoursAgo(4), result: null },        // pending, must not count
-+      { id: '5', timestamp: hoursAgo(200), result: 'WIN' },     // outside 7d
-+      { id: '6', timestamp: hoursAgo(300), result: 'LOSS' },    // outside 7d
-+    ],
++// ── fetch double that records every URL ────────────────────────────────
++function makeFetch(routes) {
++  const calls = [];
++  const impl = async (url) => {
++    calls.push(String(url));
++    for (const [match, res] of routes) {
++      if (String(url).includes(match)) return res();
++    }
++    throw new Error('unrouted: ' + url);
 +  };
-+
-+  const c7 = wr.countWindowed(payload, wr.windowCutoff('7d', now));
-+  eq('7d window counts only in-window decided', { w: c7.wins, l: c7.losses }, { w: 1, l: 1 });
-+  eq('UNKNOWN/pending excluded from decided', c7.decided, 2);
-+  eq('recordsConsidered counts all in-window rows', c7.recordsConsidered, 4);
-+
-+  const cAll = wr.countWindowed(payload, 0);
-+  eq('all-time counts every decided row', cAll.decided, 4);
-+
-+  // Phase 5 regression: the endpoint returns an object, not a bare array
-+  const bare = wr.countWindowed(payload.signals, 0);
-+  eq('bare array payload also parses', bare.decided, 4);
-+  eq('null payload -> zeros, no throw', wr.countWindowed(null, 0).decided, 0);
-+  eq('garbage payload -> zeros', wr.countWindowed({ oops: true }, 0).decided, 0);
-+  eq('unparseable timestamp skipped',
-+     wr.countWindowed({ signals: [{ id: 'x', timestamp: 'not-a-date', result: 'WIN' }] }, 0).decided, 0);
++  return { impl, calls };
 +}
++const jsonRes = (body, status = 200) => () => ({
++  ok: status >= 200 && status < 300, status, json: async () => body,
++});
 +
-+console.log('\n── 50-row retention cap => lower-bound detection ──────────');
++const signalBody = (extra = {}) => ({
++  id: 'sig_1', pair: 'BTC/USD', marketStatus: 'OPEN',
++  signal: { finalSignal: 'BUY', confidence: '87%' }, ...extra,
++});
++
++console.log('── routing: normal view reads the cache ───────────────────');
 +{
-+  const now = Date.now();
-+  const hoursAgo = h => new Date(now - h * 3600 * 1000).toISOString();
-+
-+  // A busy pair at the cap whose oldest retained row is only 24h old cannot
-+  // answer "last 7 days" — older rows have been evicted server-side.
-+  const capped = { signals: Array.from({ length: 50 }, (_, i) => ({
-+    id: 'c' + i, timestamp: hoursAgo(i * 0.5), result: i % 2 ? 'WIN' : 'LOSS',
-+  })) };
-+  const c7 = wr.countWindowed(capped, wr.windowCutoff('7d', now));
-+  ok('at-cap pair with recent oldest row is flagged incomplete', !c7.complete);
-+  ok('count is still returned (as a lower bound)', c7.decided === 50);
-+
-+  // A quiet pair below the cap is authoritative
-+  const small = { signals: [
-+    { id: 'a', timestamp: hoursAgo(1), result: 'WIN' },
-+    { id: 'b', timestamp: hoursAgo(300), result: 'LOSS' },
-+  ] };
-+  ok('below-cap pair is complete', wr.countWindowed(small, wr.windowCutoff('7d', now)).complete);
-+
-+  // At the cap but the oldest row predates the cutoff => window fully covered
-+  const cappedOld = { signals: Array.from({ length: 50 }, (_, i) => ({
-+    id: 'o' + i, timestamp: hoursAgo(i * 20), result: 'WIN',
-+  })) };
-+  ok('at-cap pair whose oldest row predates cutoff is complete',
-+     wr.countWindowed(cappedOld, wr.windowCutoff('today', now)).complete);
-+
-+  // combine: any truncated pair taints the aggregate
-+  const combined = wr.combineWindowed([
-+    { pair: 'BTC/USD', count: c7 },
-+    { pair: 'SOL/USD', count: wr.countWindowed(small, wr.windowCutoff('7d', now)) },
-+    { pair: 'DEAD/USD', count: null },   // fetch failed
++  const { impl, calls } = makeFetch([
++    ['/api/signals/latest', jsonRes(signalBody({
++      cached: true, generatedAt: '2026-07-29T09:01:05.778Z',
++      generationAge: 208, nextRefreshIn: 92, generationId: 'gen_x', stale: false,
++    }))],
 +  ]);
-+  ok('aggregate marked incomplete when any pair truncated', !combined.coverage.complete);
-+  eq('truncated pairs listed', combined.coverage.truncatedPairs, ['BTC/USD']);
-+  eq('failed pair contributes nothing', combined.totalWins + combined.totalLosses, c7.decided + 1);
-+  eq('all-complete aggregate reports complete',
-+     wr.combineWindowed([{ pair: 'X/Y', count: wr.countWindowed(small, 0) }]).coverage.complete, true);
-+  eq('empty combine -> WR 0 not NaN', wr.combineWindowed([]).winRate, 0);
++  const out = await sc.fetchCachedSignal('BTC/USD', { apiBase: 'http://w', fetchImpl: impl });
++  eq('one request only', calls.length, 1);
++  ok('hits the cache endpoint', calls[0].includes('/api/signals/latest?pair=btcusd'), calls[0]);
++  ok('never touches /api/signal on a hit', !calls.some(c => c.includes('/api/signal?')));
++  eq('source tagged cache', out.source, 'cache');
++  eq('cached flag preserved', out.data.cached, true);
++  eq('generationId preserved', out.data.generationId, 'gen_x');
 +}
 +
-+console.log('\n── card subtitles (spec §4.3) ─────────────────────────────');
++console.log('\n── routing: 404 falls back to fresh generation ────────────');
 +{
-+  const f = (pairScope, timeRange) => wr.filterSubtitle({ pairScope, timeRange }, 'EUR/USD');
-+  eq('selected + all keeps the original wording', f('selected', 'all'), 'All users · EUR/USD');
-+  eq('all + all', f('all', 'all'), 'All pairs · All time');
-+  eq('all + today', f('all', 'today'), 'All pairs · Today');
-+  eq('all + 7d', f('all', '7d'), 'All pairs · Last 7 days');
-+  eq('selected + today', f('selected', 'today'), 'EUR/USD · Today');
-+  eq('selected + 7d', f('selected', '7d'), 'EUR/USD · Last 7 days');
++  const { impl, calls } = makeFetch([
++    ['/api/signals/latest', jsonRes({ error: true, stale: true, scanned: false }, 404)],
++    ['/api/signal?', jsonRes(signalBody({ cached: false, forceRefresh: true }))],
++  ]);
++  const out = await sc.fetchCachedSignal('USD/CHF', { apiBase: 'http://w', fetchImpl: impl });
++  eq('two requests', calls.length, 2);
++  ok('cache tried first', calls[0].includes('/api/signals/latest'));
++  ok('then fresh generation', calls[1].includes('/api/signal?pair=usdchf'));
++  eq('flagged as cache-miss fallback', out.data.fallback, 'cache_miss');
++  eq('source tagged', out.source, 'cache_miss_fallback');
++  eq('cached false', out.data.cached, false);
 +}
 +
-+console.log('\n── 5-min view cache (spec §3.4 throttle) ──────────────────');
++console.log('\n── routing: non-404 errors surface (no silent fallback) ───');
 +{
-+  // Model the cache the effect uses: key -> {at, state}, TTL 5 min, and a
-+  // manual retry that must bypass a fresh entry.
-+  const TTL = 5 * 60 * 1000;
-+  const cache = new Map();
-+  let fetches = 0;
-+  let lastReload = 0;
-+
-+  const enter = (filter, pair, now, reloadKey = 0) => {
-+    const key = wr.filterCacheKey(filter, pair);
-+    const hit = cache.get(key);
-+    const fresh = hit && now - hit.at < TTL;
-+    if (fresh && reloadKey === lastReload) return { served: 'cache', value: hit.state };
-+    lastReload = reloadKey;
-+    fetches++;
-+    const state = { pair, filter, stats: { totalSignals: fetches } };
-+    cache.set(key, { at: now, state });
-+    return { served: 'network', value: state };
-+  };
-+
-+  const t0 = 1_000_000;
-+  const all7d = { pairScope: 'all', timeRange: '7d' };
-+  eq('first entry hits the network', enter(all7d, 'EUR/USD', t0).served, 'network');
-+  eq('re-entry within TTL is served from cache', enter(all7d, 'EUR/USD', t0 + 60_000).served, 'cache');
-+  eq('all-pairs cache is pair-independent', enter(all7d, 'BTC/USD', t0 + 61_000).served, 'cache');
-+  eq('a different window is a different key', enter({ pairScope: 'all', timeRange: 'today' }, 'EUR/USD', t0 + 62_000).served, 'network');
-+  eq('selected scope is pair-specific',
-+     enter({ pairScope: 'selected', timeRange: 'all' }, 'EUR/USD', t0).served, 'network');
-+  eq('...and a different pair refetches',
-+     enter({ pairScope: 'selected', timeRange: 'all' }, 'BTC/USD', t0 + 1000).served, 'network');
-+  eq('entry past TTL refetches', enter(all7d, 'EUR/USD', t0 + TTL + 1).served, 'network');
-+  eq('manual retry bypasses a fresh cache',
-+     enter(all7d, 'EUR/USD', t0 + TTL + 2, 1).served, 'network');
-+  ok('fan-out avoided on cached re-entry (network calls stayed low)', fetches === 6, 'fetches=' + fetches);
++  const { impl, calls } = makeFetch([['/api/signals/latest', jsonRes({}, 500)]]);
++  let threw = null;
++  try { await sc.fetchCachedSignal('BTC/USD', { apiBase: 'http://w', fetchImpl: impl }); }
++  catch (e) { threw = e; }
++  ok('500 throws rather than masking', !!threw, String(threw));
++  eq('did not attempt a fresh run', calls.length, 1);
 +}
 +
-+console.log('\n── wiring assertions ──────────────────────────────────────');
++console.log('\n── routing: a 200 without a signal is treated as a miss ───');
++{
++  const { impl, calls } = makeFetch([
++    ['/api/signals/latest', jsonRes({ cached: true, pair: 'BTC/USD' })],   // no .signal
++    ['/api/signal?', jsonRes(signalBody())],
++  ]);
++  const out = await sc.fetchCachedSignal('BTC/USD', { apiBase: 'http://w', fetchImpl: impl });
++  eq('fell through to fresh', calls.length, 2);
++  ok('renders a real signal', !!out.data.signal);
++}
++
++console.log('\n── Force Refresh always runs the engine ───────────────────');
++{
++  const { impl, calls } = makeFetch([['/api/signal?', jsonRes(signalBody({ cached: false, forceRefresh: true }))]]);
++  const out = await sc.fetchFreshSignal('BTC/USD', { apiBase: 'http://w', fetchImpl: impl });
++  eq('single request', calls.length, 1);
++  ok('never reads the cache', !calls.some(c => c.includes('/api/signals/latest')));
++  eq('source tagged fresh', out.source, 'fresh');
++  eq('cached false', out.data.cached, false);
++}
++
++console.log('\n── freshness badge (spec §A.5) ────────────────────────────');
++{
++  const cached = sc.freshnessBadge({ cached: true, generationAge: 47, nextRefreshIn: 253 });
++  eq('cached label', cached.label, 'Generated 47s ago');
++  eq('cached detail', cached.detail, 'Next refresh in 4m 13s');
++  eq('cached kind', cached.kind, 'cached');
++
++  const live = sc.freshnessBadge({ cached: false });
++  eq('live label', live.label, 'LIVE');
++  eq('live kind', live.kind, 'live');
++
++  const miss = sc.freshnessBadge({ cached: false, fallback: 'cache_miss' });
++  eq('on-demand kind', miss.kind, 'on_demand');
++  ok('on-demand explains why', miss.detail.includes('not in scheduled scan'));
++  ok('on-demand is amber', miss.className.includes('ffb74d'));
++
++  eq('null in -> null out', sc.freshnessBadge(null), null);
++  // age missing entirely must not render "NaN ago"
++  const noAge = sc.freshnessBadge({ cached: true });
++  ok('missing age degrades gracefully', !String(noAge.label).includes('NaN'), noAge.label);
++}
++
++console.log('\n── countdown formatting ───────────────────────────────────');
++{
++  eq('seconds', sc.formatCountdown(47), '47s');
++  eq('exact minutes', sc.formatCountdown(240), '4m');
++  eq('minutes + seconds', sc.formatCountdown(253), '4m 13s');
++  eq('zero', sc.formatCountdown(0), '0s');
++  eq('negative clamped', sc.formatCountdown(-5), '0s');
++  eq('non-numeric', sc.formatCountdown(undefined), '—');
++  eq('fresh age reads "just now"', sc.formatAge(2), 'just now');
++  eq('older age', sc.formatAge(125), '2m 5s ago');
++}
++
++console.log('\n── auto-refresh timer sync (spec §A.4.1) ──────────────────');
++{
++  // observed live: nextRefreshIn counted 92 -> 6 then a new generation appeared
++  eq('253s -> 256s delay', sc.computeRefreshDelayMs(253), 253 * 1000 + 3000);
++  eq('92s -> 95s delay', sc.computeRefreshDelayMs(92), 95000);
++  // never hammer the worker when the countdown is at/near zero
++  eq('0s clamps to the 5s floor', sc.computeRefreshDelayMs(0), 5000 + 3000);
++  eq('negative clamps to floor', sc.computeRefreshDelayMs(-30), 8000);
++  // never sleep longer than one scan cycle
++  eq('absurd value capped at one cycle', sc.computeRefreshDelayMs(99999), 300 * 1000 + 3000);
++  // missing field -> legacy behaviour
++  eq('undefined -> 60s fallback', sc.computeRefreshDelayMs(undefined), 60000);
++  eq('null -> 60s fallback', sc.computeRefreshDelayMs(null), 60000);
++  eq('NaN -> 60s fallback', sc.computeRefreshDelayMs(NaN), 60000);
++  eq('string -> 60s fallback', sc.computeRefreshDelayMs('253'), 60000);
++}
++
++console.log('\n── scanner cache lookup ───────────────────────────────────');
++{
++  const all = { signals: { 'BTC/USD': signalBody(), 'EUR/USD': signalBody() } };
++  ok('exact key hit', !!sc.pickFromLatestAll(all, 'BTC/USD'));
++  ok('normalised spelling hit', !!sc.pickFromLatestAll(all, 'btcusd'));
++  ok('uncovered pair misses', sc.pickFromLatestAll(all, 'EURUSD-OTC') === null);
++  ok('empty payload safe', sc.pickFromLatestAll({}, 'BTC/USD') === null);
++  ok('null payload safe', sc.pickFromLatestAll(null, 'BTC/USD') === null);
++
++  const { impl } = makeFetch([['/api/signals/latest', jsonRes(all)]]);
++  const fetched = await sc.fetchLatestAll({ apiBase: 'http://w', fetchImpl: impl });
++  eq('all-pairs fetch returns the map', Object.keys(fetched.signals).length, 2);
++}
++
++console.log('\n── wiring + regressions ───────────────────────────────────');
 +{
 +  const app = readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
-+  ok('FilterChipRow imported', app.includes("import { FilterChipRow }"));
-+  ok('two chip rows rendered', (app.match(/<FilterChipRow/g) || []).length === 2);
-+  ok('filter state wired', app.includes('serverWrFilter') && app.includes('setServerWrFilter'));
-+  ok('effect re-runs on filter change', app.includes('[activeTab, selectedPair, serverWrFilter, serverWrReloadKey]'));
-+  ok('retry bumps the reload key', app.includes('setServerWrReloadKey(k => k + 1)'));
-+  ok('all-pairs failure falls back to selected pair', app.includes('All Pairs view unavailable'));
-+  ok('half-failure guard present', app.includes('Math.ceil(pairs.length / 2)'));
-+  ok('aggregate type guard used', app.includes('isAggregateStats'));
-+  ok('5-min view cache wired', app.includes('SERVER_WR_CACHE_TTL_MS') && app.includes('serverWrCacheRef'));
-+  ok('only successful views are cached', app.includes('if (next.stats) serverWrCacheRef.current.set'));
-+  ok('Phase 5 extractHistoryRecords reused', readFileSync(path.join(root, 'src/utils/serverWr.ts'), 'utf8')
-+     .includes("from './signalMeta'"));
-+
-+  // Phase 5 fixes must survive untouched (spec §8)
-+  ok('Phase 5: 25s signal timeout intact', app.includes('controller.abort(), 25000'));
-+  ok('Phase 5: CB card intact', app.includes('CircuitBreakerCard'));
-+  ok('Phase 5: health pill intact', app.includes('<HealthPill />'));
-+  ok('Phase 5: history reconciliation intact', app.includes('reconcileHistory'));
 +  const scanner = readFileSync(path.join(root, 'src/hooks/useScanner.ts'), 'utf8');
-+  ok('Phase 5: scanner 20s timeouts intact', (scanner.match(/controller\.abort\(\), 20000/g) || []).length === 2);
-+  ok('Phase 5: XAU still absent', !/'XAU\/USD'/.test(app + scanner));
++
++  // Phase 8
++  ok('App routes normal views through the cache helper', app.includes('fetchCachedSignal('));
++  ok('App has a force-fresh path', app.includes('fetchFreshSignal('));
++  ok('Force Refresh button wired', app.includes('fetchSignal(false, true)'));
++  ok('freshness pill rendered', app.includes('freshnessBadge(') && app.includes('freshness.label'));
++  ok('timer driven by server countdown', app.includes('computeRefreshDelayMs('));
++  ok('auto-refresh no longer hardcodes a 60s reset', !app.includes('nextRefreshAtRef.current = Date.now() + 60000'));
++  ok('scanner reads the shared cache', scanner.includes('fetchLatestAll('));
++  ok('scanner keeps the batch fallback', scanner.includes('fetchBatchGroup(group)'));
++
++  // Phase 5 regressions
++  ok('P5: 25s timeout intact', app.includes('controller.abort(), 25000'));
++  ok('P5: abort-and-supersede intact', app.includes('fetchAbortRef.current.abort()'));
++  ok('P5: seq guard intact', app.includes('mySeq !== fetchSeqRef.current'));
++  ok('P5: CB card intact', app.includes('CircuitBreakerCard'));
++  ok('P5: health pill intact', app.includes('<HealthPill />'));
++  ok('P5: history reconciliation intact', app.includes('reconcileHistory'));
++  ok('P5: XAU still absent', !/'XAU\/USD'/.test(app + scanner));
++  ok('P5: scanner 20s timeouts intact', (scanner.match(/controller\.abort\(\), 20000/g) || []).length === 2);
++
++  // Phase 6 regressions
++  ok('P6: filter chips intact', (app.match(/<FilterChipRow/g) || []).length === 2);
++  ok('P6: WR filter state intact', app.includes('serverWrFilter'));
++  ok('P6: coverage warning intact', app.includes('50 most recent signals per pair'));
++  ok('P6: 5-min WR cache intact', app.includes('SERVER_WR_CACHE_TTL_MS'));
++
++  // bans
++  ok('no deploy commands', !/vercel --prod|git push/.test(app + scanner));
++  const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
++  const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
++  ok('no new npm dependency', deps.length === 14, 'dep count = ' + deps.length);
 +}
 +
 +console.log('\n───────────────────────────────────────────────────────────');
 +console.log('PASS: ' + pass + '   FAIL: ' + fail);
 +if (fail > 0) { console.log('\nFailures:'); failures.forEach(f => console.log('  - ' + f)); process.exit(1); }
-+console.log('ALL PHASE 6 SMOKE TESTS PASSED');
++console.log('ALL PHASE 8 SMOKE TESTS PASSED');
 diff --git a/src/App.tsx b/src/App.tsx
-index f7e37ef..20893da 100644
+index 20893da..c87442c 100644
 --- a/src/App.tsx
 +++ b/src/App.tsx
-@@ -35,6 +35,13 @@ import {
-   deriveAiStatus, aiStatusBadge, isSupportedPair, ENTRY_SOURCE_LABEL,
+@@ -36,6 +36,10 @@ import {
    extractHistoryRecords, reconcileHistory,
  } from './utils/signalMeta';
-+import { FilterChipRow } from './components/FilterChipRow';
+ import { FilterChipRow } from './components/FilterChipRow';
 +import {
-+  ServerWrFilter, DEFAULT_SERVER_WR_FILTER, SERVER_WR_FILTER_KEY,
-+  parseServerWrFilter, sameFilter, windowCutoff, filterSubtitle, filterCacheKey,
-+  aggregateAllPairs, countWindowed, combineWindowed, TIME_RANGE_LABEL,
-+  PairScope, TimeRange, StatsPairRow, CoverageSummary,
-+} from './utils/serverWr';
- 
- interface HistoryEntry {
-   id: string;
-@@ -82,17 +89,44 @@ interface ServerPairStats {
-   dynamicConfidenceAdjustment?: number;
- }
- 
-+/** Aggregate (All Pairs) or windowed (Today / 7d) result — not a single-pair payload. */
-+interface ServerAggregateStats {
-+  isAggregate: true;
-+  scope: PairScope;
-+  window: TimeRange;
-+  totalWins: number;
-+  totalLosses: number;
-+  totalSignals: number;          // decided count (wins + losses)
-+  winRate: number;               // 0..1
-+  pairCount?: number;
-+  recordsConsidered?: number;    // history rows inside the window
-+  coverage?: CoverageSummary;    // 50-row cap may hide older rows
-+  lastUpdated?: string;
-+}
-+
-+function isAggregateStats(s: ServerPairStats | ServerAggregateStats | null): s is ServerAggregateStats {
-+  return !!s && (s as ServerAggregateStats).isAggregate === true;
-+}
-+
- interface ServerStatsState {
-   pair: string;
-+  filter: ServerWrFilter;
-   loading: boolean;
--  stats: ServerPairStats | null;
-+  stats: ServerPairStats | ServerAggregateStats | null;
-   message?: string;
-+  /** set when the All Pairs view failed and we fell back to the selected pair */
-+  fallbackNote?: string;
-+  /** true when the user can retry (e.g. most parallel fetches failed) */
-+  retryable?: boolean;
- }
- 
- type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner';
- 
- const DEFAULT_FAVORITES = ['EUR/USD', 'GBP/USD', 'BTC/USD'];
- 
-+/** Spec §3.4: memoise a computed Server-WR view for this long. */
-+const SERVER_WR_CACHE_TTL_MS = 5 * 60 * 1000;
-+
- export default function App() {
-   const [selectedPair, setSelectedPair] = useState(() => {
-     try { return localStorage.getItem('ftt_selected_pair') || 'EUR/USD'; } catch { return 'EUR/USD'; }
-@@ -137,6 +171,19 @@ export default function App() {
-   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-   const [refreshCountdown, setRefreshCountdown] = useState(60);
-   const [serverStatsState, setServerStatsState] = useState<ServerStatsState | null>(null);
-+  const [serverWrFilter, setServerWrFilter] = useState<ServerWrFilter>(() => {
-+    try {
-+      const saved = localStorage.getItem(SERVER_WR_FILTER_KEY);
-+      return saved ? parseServerWrFilter(saved) : { ...DEFAULT_SERVER_WR_FILTER };
-+    } catch { return { ...DEFAULT_SERVER_WR_FILTER }; }
-+  });
-+  // Manual retry: bumping this re-runs the server-stats effect.
-+  const [serverWrReloadKey, setServerWrReloadKey] = useState(0);
-+  // Spec §3.4 throttle: memoise each computed view for 5 min so re-entering the
-+  // History tab does not repeat the ~13-request fan-out. Keyed by
-+  // (scope, pair, window); a manual retry bypasses it.
-+  const serverWrCacheRef = useRef<Map<string, { at: number; state: ServerStatsState }>>(new Map());
-+  const lastServerWrReloadRef = useRef(0);
- 
++  CachedSignalData, fetchCachedSignal, fetchFreshSignal, freshnessBadge,
++  computeRefreshDelayMs, formatCountdown, DEFAULT_REFRESH_SECONDS,
++} from './utils/signalCache';
+ import {
+   ServerWrFilter, DEFAULT_SERVER_WR_FILTER, SERVER_WR_FILTER_KEY,
+   parseServerWrFilter, sameFilter, windowCutoff, filterSubtitle, filterCacheKey,
+@@ -188,6 +192,11 @@ export default function App() {
    const historyRef = useRef<HistoryEntry[]>(history);
    historyRef.current = history;
-@@ -264,6 +311,10 @@ export default function App() {
-     try { localStorage.setItem('ftt_history', JSON.stringify(history)); } catch {}
-   }, [history]);
  
-+  useEffect(() => {
-+    try { localStorage.setItem(SERVER_WR_FILTER_KEY, JSON.stringify(serverWrFilter)); } catch {}
-+  }, [serverWrFilter]);
++  // Auto-refresh: timestamp-based (not tick-counter-based) so it's resilient to
++  // the tab/screen being backgrounded for a long time. Phase 8 re-points this at
++  // the worker's own scan cycle after every successful fetch.
++  const nextRefreshAtRef = useRef<number>(Date.now() + DEFAULT_REFRESH_SECONDS * 1000);
 +
-   // BUG #6 fix: clear the previous pair's signal before fetching the new one.
-   // Without this the old pair's card stayed on screen for the whole 5-8s fetch,
-   // so the user briefly read BTC numbers under an EUR/USD heading.
-@@ -423,51 +474,215 @@ export default function App() {
-     };
-   }, [activeTab]);
+   const fetchAbortRef = useRef<AbortController | null>(null);
+   const fetchInFlightRef = useRef(false);
+   // Monotonic id: only the newest request is allowed to write state. Guards
+@@ -195,7 +204,12 @@ export default function App() {
+   // would otherwise show stale data).
+   const fetchSeqRef = useRef(0);
  
-+  // ── Server Win Rate, filtered (Phase 6) ────────────────────────────────
-+  // Four routes, chosen by (pairScope, timeRange):
-+  //   selected + all   -> /api/stats?pair=X          (unchanged Phase 2 path)
-+  //   all      + all   -> /api/stats                 (aggregate wins/losses)
-+  //   selected + win   -> /api/history?pair=X        (count inside the window)
-+  //   all      + win   -> /api/stats then /api/history per pair, in parallel
-+  //
-+  // Windowed routes derive from history, which the worker caps at 50 rows per
-+  // pair with no pagination — so those counts can be a lower bound. Coverage is
-+  // tracked and surfaced rather than silently rounded off.
+-  const fetchSignal = useCallback(async (silent = false) => {
++  /**
++   * Phase 8 — normal views read the Phase 7 worker cache; Force Refresh runs
++   * the engine. Every Phase 5 guard (abort-and-supersede, seq check, 25s
++   * timeout, conditional finally) is preserved exactly.
++   */
++  const fetchSignal = useCallback(async (silent = false, forceFresh = false) => {
+     // BUG #1 fix: previously this early-returned whenever a fetch was in
+     // flight, so tapping Retry during a slow request did *nothing* — no
+     // spinner, no error, no request. The user read that as "button dead".
+@@ -217,10 +231,12 @@ export default function App() {
+     setError(null);
+     const requestedPair = selectedPair;
+     try {
+-      const cleanPair = requestedPair.replace('/', '').toLowerCase();
+-      const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
+-      if (!response.ok) throw new Error('Network error');
+-      const data: SignalData = await response.json();
++      const deps = { apiBase: API_BASE, signal: controller.signal };
++      // Cache read costs the backend nothing; a fresh run costs an engine pass.
++      const outcome = forceFresh
++        ? await fetchFreshSignal(requestedPair, deps)
++        : await fetchCachedSignal(requestedPair, deps);
++      const data: CachedSignalData = outcome.data;
+ 
+       const isMarketClosedResponse = data?.marketStatus === 'CLOSED' && data.signal === null;
+       if (!data?.marketStatus || (!data.signal && !isMarketClosedResponse)) {
+@@ -239,7 +255,11 @@ export default function App() {
+ 
+       setSignalData(data);
+       setLastUpdated(new Date());
+-      setRefreshCountdown(60);
++      // Phase 8: sync the visible countdown with the worker's scan cycle when
++      // it told us one; otherwise keep the legacy fixed interval.
++      const serverNext = typeof data.nextRefreshIn === 'number' ? data.nextRefreshIn : null;
++      setRefreshCountdown(serverNext !== null ? Math.max(1, serverNext) : DEFAULT_REFRESH_SECONDS);
++      nextRefreshAtRef.current = Date.now() + computeRefreshDelayMs(serverNext);
+ 
+       if (data.signal && ['BUY', 'SELL'].includes(data.signal.finalSignal)) {
+         const workerSignalId = data.id || data.signalId;
+@@ -325,22 +345,23 @@ export default function App() {
+     try { localStorage.setItem('ftt_selected_pair', selectedPair); } catch {}
+   }, [selectedPair]);
+ 
+-  // Auto-refresh: timestamp-based (not tick-counter-based) so it's resilient
+-  // to the tab/screen being backgrounded for a long time. When the page
+-  // becomes visible again, we immediately check if a refresh is overdue.
+-  const nextRefreshAtRef = useRef<number>(Date.now() + 60000);
+-
    useEffect(() => {
-     if (activeTab !== 'history') return;
+     if (!autoRefresh) return;
  
-     let cancelled = false;
-     const controller = new AbortController();
--    const timeoutId = setTimeout(() => controller.abort(), 10000);
-+    // Windowed All-Pairs fans out to ~13 requests; give it more room than the
-+    // single-request paths but still bail rather than hang the tab.
-+    const budgetMs = serverWrFilter.pairScope === 'all' && serverWrFilter.timeRange !== 'all' ? 20000 : 10000;
-+    const timeoutId = setTimeout(() => controller.abort(), budgetMs);
-+
-+    const cacheKey = filterCacheKey(serverWrFilter, selectedPair);
-+    const cached = serverWrCacheRef.current.get(cacheKey);
-+    const cacheFresh = cached && Date.now() - cached.at < SERVER_WR_CACHE_TTL_MS;
-+    if (cacheFresh && serverWrReloadKey === lastServerWrReloadRef.current) {
-+      setServerStatsState(cached.state);
-+      clearTimeout(timeoutId);
-+      return () => { cancelled = true; controller.abort(); clearTimeout(timeoutId); };
+-    nextRefreshAtRef.current = Date.now() + 60000;
++    // Phase 8: do NOT reset the schedule here. fetchSignal() already set it from
++    // the worker's `nextRefreshIn`; overwriting it with a flat 60s would undo
++    // the cron sync on every re-render of this effect.
++    if (nextRefreshAtRef.current <= Date.now()) {
++      nextRefreshAtRef.current = Date.now() + DEFAULT_REFRESH_SECONDS * 1000;
 +    }
-+    lastServerWrReloadRef.current = serverWrReloadKey;
  
-     setServerStatsState(prev => ({
-       pair: selectedPair,
-+      filter: serverWrFilter,
-       loading: true,
--      stats: prev?.pair === selectedPair ? prev.stats : null,
--      message: prev?.pair === selectedPair ? prev.message : undefined,
-+      // keep the previous numbers visible while refetching the SAME view;
-+      // clear them when the view changed, so stale figures never sit under a
-+      // heading that now says something else
-+      stats: prev && sameFilter(prev.filter, serverWrFilter) && prev.pair === selectedPair ? prev.stats : null,
-+      message: undefined,
-     }));
- 
--    const fetchServerStats = async () => {
--      try {
--        const cleanPair = selectedPair.replace(/\//g, '').toLowerCase();
--        const response = await fetch(`${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair)}`, { signal: controller.signal });
--        if (!response.ok) throw new Error('stats');
--        const payload: { pair?: string; stats?: ServerPairStats | null; message?: string } = await response.json();
-+    // Cache only successful computations — errors must stay retryable.
-+    const publish = (next: ServerStatsState) => {
-+      if (next.stats) serverWrCacheRef.current.set(cacheKey, { at: Date.now(), state: next });
-+      setServerStatsState(next);
-+    };
-+
-+    const getJson = async (url: string) => {
-+      const res = await fetch(url, { signal: controller.signal });
-+      if (!res.ok) throw new Error('http ' + res.status);
-+      return res.json();
-+    };
-+
-+    const cleanPair = (pair: string) => pair.replace(/\//g, '').toLowerCase();
-+
-+    const fetchPairList = async (): Promise<StatsPairRow[]> => {
-+      const payload = await getJson(`${API_BASE}/api/stats`);
-+      const pairs = Array.isArray(payload?.pairs) ? (payload.pairs as StatsPairRow[]) : [];
-+      return pairs.filter(p => p && typeof p.pair === 'string' && isSupportedPair(p.pair));
-+    };
-+
-+    const compute = async () => {
-+      const { pairScope, timeRange } = serverWrFilter;
-+      const cutoff = windowCutoff(timeRange);
-+
-+      // ── selected + all time: the original endpoint ──
-+      if (pairScope === 'selected' && timeRange === 'all') {
-+        const payload = await getJson(`${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair(selectedPair))}`);
-         if (cancelled) return;
--        setServerStatsState({
--          pair: payload.pair || selectedPair,
-+        publish({
-+          pair: payload?.pair || selectedPair,
-+          filter: serverWrFilter,
-+          loading: false,
-+          stats: payload?.stats || null,
-+          message: payload?.message,
-+        });
-+        return;
-+      }
-+
-+      // ── all pairs + all time: aggregate the stats index ──
-+      if (pairScope === 'all' && timeRange === 'all') {
-+        const pairs = await fetchPairList();
-+        if (cancelled) return;
-+        const agg = aggregateAllPairs(pairs);
-+        publish({
-+          pair: selectedPair,
-+          filter: serverWrFilter,
-           loading: false,
--          stats: payload.stats || null,
--          message: payload.message,
-+          stats: {
-+            isAggregate: true, scope: 'all', window: 'all',
-+            totalWins: agg.totalWins, totalLosses: agg.totalLosses,
-+            totalSignals: agg.totalSignals, winRate: agg.winRate,
-+            pairCount: agg.pairCount,
-+            lastUpdated: agg.lastUpdated,
-+            // /api/stats counters are lifetime and authoritative — no cap issue
-+            coverage: { complete: true, truncatedPairs: [] },
-+          },
-+          message: agg.totalSignals === 0 ? 'No decided signals yet.' : undefined,
-         });
--      } catch (e) {
--        if (!cancelled) {
--          console.warn('Server stats fetch failed; hiding section.', { pair: selectedPair, error: e });
--          setServerStatsState(null);
-+        return;
-+      }
-+
-+      // ── selected pair + window: one history call ──
-+      if (pairScope === 'selected') {
-+        const payload = await getJson(
-+          `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(selectedPair))}&limit=50`);
-+        if (cancelled) return;
-+        const count = countWindowed(payload, cutoff);
-+        publish({
-+          pair: selectedPair,
-+          filter: serverWrFilter,
-+          loading: false,
-+          stats: {
-+            isAggregate: true, scope: 'selected', window: timeRange,
-+            totalWins: count.wins, totalLosses: count.losses,
-+            totalSignals: count.decided,
-+            winRate: count.decided > 0 ? count.wins / count.decided : 0,
-+            recordsConsidered: count.recordsConsidered,
-+            coverage: { complete: count.complete, truncatedPairs: count.complete ? [] : [selectedPair] },
-+          },
-+          message: count.decided === 0
-+            ? `No decided signals for ${selectedPair} in this window.` : undefined,
-+        });
-+        return;
-+      }
-+
-+      // ── all pairs + window: fan out ──
-+      const pairs = await fetchPairList();
-+      if (cancelled) return;
-+      if (pairs.length === 0) throw new Error('no pairs');
-+
-+      const settled = await Promise.all(pairs.map(async p => {
-+        try {
-+          const payload = await getJson(
-+            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(p.pair))}&limit=50`);
-+          return { pair: p.pair, count: countWindowed(payload, cutoff) };
-+        } catch {
-+          return { pair: p.pair, count: null };
-         }
--      } finally {
--        clearTimeout(timeoutId);
-+      }));
-+      if (cancelled) return;
-+
-+      const failed = settled.filter(r => r.count === null).length;
-+      // Spec: if half or more of the fan-out fails the number is not worth
-+      // showing — offer a retry instead of a confidently wrong figure.
-+      if (failed >= Math.ceil(pairs.length / 2)) {
-+        setServerStatsState({
-+          pair: selectedPair, filter: serverWrFilter, loading: false, stats: null,
-+          message: `Insufficient data — ${failed} of ${pairs.length} pair requests failed.`,
-+          retryable: true,
-+        });
-+        return;
-       }
-+
-+      const combined = combineWindowed(settled);
-+      publish({
-+        pair: selectedPair,
-+        filter: serverWrFilter,
-+        loading: false,
-+        stats: {
-+          isAggregate: true, scope: 'all', window: timeRange,
-+          totalWins: combined.totalWins, totalLosses: combined.totalLosses,
-+          totalSignals: combined.totalSignals, winRate: combined.winRate,
-+          pairCount: combined.pairCount,
-+          recordsConsidered: combined.recordsConsidered,
-+          coverage: combined.coverage,
-+        },
-+        message: combined.totalSignals === 0
-+          ? `No decided signals across any pair in this window.` : undefined,
-+        retryable: failed > 0 ? true : undefined,
-+      });
-     };
- 
--    fetchServerStats();
-+    compute().catch(async (e) => {
-+      if (cancelled || e?.name === 'AbortError') return;
-+      console.warn('Server win-rate fetch failed.', { filter: serverWrFilter, pair: selectedPair, error: e });
-+
-+      // Spec §4.6: if the All Pairs view is unavailable, degrade to the
-+      // selected pair rather than showing an empty card.
-+      if (serverWrFilter.pairScope === 'all') {
-+        try {
-+          const payload = await getJson(
-+            `${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair(selectedPair))}`);
-+          if (cancelled) return;
-+          setServerStatsState({
-+            pair: payload?.pair || selectedPair,
-+            filter: { pairScope: 'selected', timeRange: 'all' },
-+            loading: false,
-+            stats: payload?.stats || null,
-+            fallbackNote: 'All Pairs view unavailable — showing selected pair.',
-+            retryable: true,
-+          });
-+          return;
-+        } catch { /* fall through */ }
-+      }
-+      if (!cancelled) {
-+        setServerStatsState({
-+          pair: selectedPair, filter: serverWrFilter, loading: false, stats: null,
-+          message: 'Server stats unavailable.', retryable: true,
-+        });
-+      }
-+    }).finally(() => clearTimeout(timeoutId));
- 
-     return () => {
-       cancelled = true;
-       controller.abort();
-       clearTimeout(timeoutId);
-     };
--  }, [activeTab, selectedPair]);
-+  }, [activeTab, selectedPair, serverWrFilter, serverWrReloadKey]);
- 
-   const pendingCount = history.filter(h => !h.result || h.result === 'PENDING').length;
-   const wins = history.filter(h => h.result === 'WIN').length;
-@@ -821,7 +1036,33 @@ export default function App() {
-               <StatCard label="Win %" value={`${winRate}%`} color="#ffb74d" />
+     const tick = () => {
+       const now = Date.now();
+       const remaining = nextRefreshAtRef.current - now;
+       if (remaining <= 0) {
+-        nextRefreshAtRef.current = now + 60000;
+-        setRefreshCountdown(60);
++        // Provisional next slot; the fetch response will re-point it precisely.
++        nextRefreshAtRef.current = now + DEFAULT_REFRESH_SECONDS * 1000;
++        setRefreshCountdown(DEFAULT_REFRESH_SECONDS);
+         fetchSignal(true);
+       } else {
+         setRefreshCountdown(Math.max(1, Math.ceil(remaining / 1000)));
+@@ -744,16 +765,29 @@ export default function App() {
+               {autoRefresh && (
+                 <div className="flex items-center gap-2 px-3 py-1.5 bg-[#1e1e23] rounded-full">
+                   <div className="w-2 h-2 rounded-full bg-[#81c784] animate-pulse" />
+-                  <span className="text-xs text-[#b0b3b8] font-medium number-tabular">{refreshCountdown}s</span>
++                  <span className="text-xs text-[#b0b3b8] font-medium number-tabular">{formatCountdown(refreshCountdown)}</span>
+                 </div>
+               )}
+-              <button 
++              {/* Cache re-read: cheap, instant, costs the backend nothing. */}
++              <button
+                 onClick={() => fetchSignal()}
+                 disabled={loading}
++                title="Refresh from cache"
++                aria-label="Refresh from cache"
+                 className="w-10 h-10 rounded-full bg-[#1e1e23] flex items-center justify-center active:scale-90 transition-transform"
+               >
+                 <RefreshCw className={cn("w-5 h-5", loading && "animate-spin")} />
+               </button>
++              {/* Force Refresh: runs the engine on demand (spec §A.4.2). */}
++              <button
++                onClick={() => fetchSignal(false, true)}
++                disabled={loading}
++                title="Force refresh — run the engine now"
++                aria-label="Force refresh"
++                className="w-10 h-10 rounded-full bg-[#ffb74d]/15 flex items-center justify-center active:scale-90 transition-transform"
++              >
++                <Zap className={cn("w-5 h-5 text-[#ffb74d]", loading && "animate-pulse")} />
++              </button>
              </div>
+           </div>
+         </div>
+@@ -1387,6 +1421,8 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
+   const coreConfidence = data.signal.coreConfidence;
+   const structureOverall = data.signal.structureVerdict?.overall;
+   const aiBadge = aiStatusBadge(deriveAiStatus(data));
++  const cacheMeta = data as CachedSignalData;
++  const freshness = freshnessBadge(cacheMeta);
  
--            <ServerStatsCard state={serverStatsState} selectedPair={selectedPair} />
-+            <div className="space-y-2 mb-3">
-+              <FilterChipRow
-+                label="Pair:"
-+                chips={[
-+                  { id: 'all', label: 'All Pairs' },
-+                  { id: 'selected', label: selectedPair },
-+                ]}
-+                selectedId={serverWrFilter.pairScope}
-+                onSelect={(id) => setServerWrFilter(prev => ({ ...prev, pairScope: id as PairScope }))}
-+              />
-+              <FilterChipRow
-+                label="Time:"
-+                chips={[
-+                  { id: 'all', label: 'All Time' },
-+                  { id: 'today', label: 'Today' },
-+                  { id: '7d', label: 'Last 7 Days' },
-+                ]}
-+                selectedId={serverWrFilter.timeRange}
-+                onSelect={(id) => setServerWrFilter(prev => ({ ...prev, timeRange: id as TimeRange }))}
-+              />
-+            </div>
-+
-+            <ServerStatsCard
-+              state={serverStatsState}
-+              selectedPair={selectedPair}
-+              onRetry={() => setServerWrReloadKey(k => k + 1)}
-+            />
- 
-             {/* List */}
-             <div className="md-surface overflow-hidden">
-@@ -1011,16 +1252,36 @@ function formatServerWinRate(value?: number) {
-   return `${pct.toFixed(1)}%`;
- }
- 
--function ServerStatsCard({ state, selectedPair }: { state: ServerStatsState | null; selectedPair: string }) {
-+function ServerStatsCard({ state, selectedPair, onRetry }: {
-+  state: ServerStatsState | null;
-+  selectedPair: string;
-+  onRetry?: () => void;
-+}) {
-   if (!state) return null;
- 
-   const stats = state.stats;
-   const hasStats = !!stats;
--  const lastUpdated = stats?.lastUpdated ? new Date(stats.lastUpdated) : null;
-+  const aggregate = isAggregateStats(stats) ? stats : null;
-+  const pairStats = !aggregate && stats ? (stats as ServerPairStats) : null;
-+
-+  const wins = aggregate ? aggregate.totalWins : (pairStats?.wins ?? 0);
-+  const losses = aggregate ? aggregate.totalLosses : (pairStats?.losses ?? 0);
-+  const signals = aggregate ? aggregate.totalSignals : pairStats?.totalSignals;
-+  const winRate = aggregate ? aggregate.winRate : pairStats?.winRate;
-+
-+  const lastUpdatedRaw = aggregate ? aggregate.lastUpdated : pairStats?.lastUpdated;
-+  const lastUpdated = lastUpdatedRaw ? new Date(lastUpdatedRaw) : null;
-   const lastUpdatedLabel = lastUpdated && !Number.isNaN(lastUpdated.getTime())
-     ? lastUpdated.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-     : null;
- 
-+  const subtitle = filterSubtitle(state.filter, state.pair || selectedPair);
-+  const windowed = state.filter.timeRange !== 'all';
-+  // Confidence adjustment is a lifetime per-pair number — meaningless once the
-+  // view is aggregated or windowed, so it is only shown on the original path.
-+  const showConfidenceAdj = !windowed && state.filter.pairScope === 'selected' && pairStats;
-+  const truncated = aggregate?.coverage && !aggregate.coverage.complete;
-+
    return (
-     <div className="md-surface p-4 mb-4 border border-[#42a5f5]/10">
-       <div className="flex items-center justify-between gap-3 mb-3">
-@@ -1030,45 +1291,86 @@ function ServerStatsCard({ state, selectedPair }: { state: ServerStatsState | nu
-           </div>
-           <div>
-             <div className="text-sm font-medium">Server Win Rate</div>
--            <div className="text-xs text-[#8e9099]">All users · {state.pair || selectedPair}</div>
-+            <div className="text-xs text-[#8e9099]">{subtitle}</div>
-           </div>
+     <div className="md-surface-highest p-0 overflow-hidden scale-in">
+@@ -1435,6 +1471,28 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
+           {best?.timeframe && <div className="px-3 py-1.5 bg-[#323238] rounded-lg text-xs font-medium flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />{best.timeframe}</div>}
          </div>
-         {state.loading && <RefreshCw className="w-4 h-4 text-[#42a5f5] animate-spin" />}
-       </div>
  
-+      {state.fallbackNote && (
-+        <div className="mb-3 rounded-xl bg-[#ffb74d]/10 border border-[#ffb74d]/20 px-3 py-2 text-[11px] text-[#ffb74d]">
-+          {state.fallbackNote}
-+        </div>
-+      )}
-+
-       {state.loading && !hasStats ? (
--        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8]">Loading server stats…</div>
-+        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8] flex items-center gap-2">
-+          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-+          {state.filter.pairScope === 'all' && windowed
-+            ? 'Computing across all pairs…'
-+            : 'Loading server stats…'}
-+        </div>
-       ) : hasStats ? (
-         <>
-           <div className="grid grid-cols-3 gap-2">
-             <div className="bg-[#1e1e23] rounded-xl p-3">
-               <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">Server Win %</div>
--              <div className="text-lg font-medium number-tabular text-[#4dd0e1]">{formatServerWinRate(stats.winRate)}</div>
-+              <div className="text-lg font-medium number-tabular text-[#4dd0e1]">{formatServerWinRate(winRate)}</div>
-             </div>
-             <div className="bg-[#1e1e23] rounded-xl p-3">
--              <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">Signals</div>
--              <div className="text-lg font-medium number-tabular">{stats.totalSignals ?? '—'}</div>
-+              <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">{windowed ? 'Decided' : 'Signals'}</div>
-+              <div className="text-lg font-medium number-tabular">{signals ?? '—'}</div>
-             </div>
-             <div className="bg-[#1e1e23] rounded-xl p-3">
-               <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">W / L</div>
-               <div className="text-lg font-medium number-tabular">
--                <span className="text-[#81c784]">{stats.wins ?? 0}</span>
-+                <span className="text-[#81c784]">{wins}</span>
-                 <span className="text-[#6e6e73]"> / </span>
--                <span className="text-[#ef5350]">{stats.losses ?? 0}</span>
-+                <span className="text-[#ef5350]">{losses}</span>
-               </div>
-             </div>
-           </div>
-+
-           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-[#6e6e73]">
--            {typeof stats.sampleSize === 'number' && <span>Lookback sample: {stats.sampleSize}</span>}
--            {typeof stats.dynamicConfidenceAdjustment === 'number' && (
--              <span>· Confidence adj: {stats.dynamicConfidenceAdjustment > 0 ? '+' : ''}{stats.dynamicConfidenceAdjustment}</span>
-+            {windowed && typeof aggregate?.recordsConsidered === 'number' && (
-+              <span>Filtered from {aggregate.recordsConsidered} recent records · {TIME_RANGE_LABEL[state.filter.timeRange]}</span>
-+            )}
-+            {!windowed && aggregate && typeof aggregate.pairCount === 'number' && (
-+              <span>{aggregate.pairCount} pairs contributing</span>
-+            )}
-+            {!windowed && pairStats && typeof pairStats.sampleSize === 'number' && (
-+              <span>Lookback sample: {pairStats.sampleSize}</span>
-+            )}
-+            {showConfidenceAdj && typeof pairStats.dynamicConfidenceAdjustment === 'number' && (
-+              <span>· Confidence adj: {pairStats.dynamicConfidenceAdjustment > 0 ? '+' : ''}{pairStats.dynamicConfidenceAdjustment}</span>
-             )}
-             {lastUpdatedLabel && <span>· Updated {lastUpdatedLabel}</span>}
-           </div>
-+
-+          {truncated && (
-+            <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#ffb74d]/10 border border-[#ffb74d]/20 px-3 py-2 text-[11px] text-[#ffb74d]">
-+              <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-+              <span>
-+                At least {signals} — the server keeps only the 50 most recent signals per pair,
-+                so older results inside this window are no longer retrievable
-+                {aggregate?.coverage?.truncatedPairs?.length
-+                  ? ` (${aggregate.coverage.truncatedPairs.slice(0, 3).join(', ')}${aggregate.coverage.truncatedPairs.length > 3 ? ` +${aggregate.coverage.truncatedPairs.length - 3} more` : ''})`
-+                  : ''}.
-+              </span>
++        {/* ── Phase 8: cache freshness ── */}
++        {freshness && (
++          <div className="flex items-center gap-2 mb-3 flex-wrap">
++            <div className={cn("px-2.5 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1.5", freshness.className)}>
++              {freshness.kind === 'live'
++                ? <Zap className="w-3 h-3" />
++                : freshness.kind === 'on_demand'
++                  ? <AlertCircle className="w-3 h-3" />
++                  : <Clock className="w-3 h-3" />}
++              {freshness.label}
 +            </div>
-+          )}
-         </>
-       ) : (
--        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8]">
--          {state.message || 'No server stats yet for this pair.'}
-+        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8] flex items-center justify-between gap-3">
-+          <span>{state.message || 'No server stats yet for this pair.'}</span>
-+          {state.retryable && onRetry && (
-+            <button
-+              onClick={onRetry}
-+              className="px-3 py-1.5 rounded-full bg-[#42a5f5]/15 text-[#42a5f5] text-[11px] font-medium active:scale-95 transition-transform whitespace-nowrap"
-+            >
-+              Retry
-+            </button>
-+          )}
-         </div>
-       )}
-     </div>
-diff --git a/src/components/FilterChipRow.tsx b/src/components/FilterChipRow.tsx
-new file mode 100644
-index 0000000..ba3f8a5
---- /dev/null
-+++ b/src/components/FilterChipRow.tsx
-@@ -0,0 +1,44 @@
-+import { cn } from '../utils/cn';
-+
-+export interface Chip {
-+  id: string;
-+  label: string;
-+}
-+
-+interface Props {
-+  chips: Chip[];
-+  selectedId: string;
-+  onSelect: (id: string) => void;
-+  /** Leading caption, e.g. "Pair:" / "Time:" */
-+  label?: string;
-+  disabled?: boolean;
-+}
-+
-+export function FilterChipRow({ chips, selectedId, onSelect, label, disabled }: Props) {
-+  return (
-+    <div className="flex items-center gap-2 flex-wrap" role="group" aria-label={label}>
-+      {label && <span className="text-xs text-[#b0b3b8] mr-1">{label}</span>}
-+      {chips.map(chip => {
-+        const active = selectedId === chip.id;
-+        return (
-+          <button
-+            key={chip.id}
-+            type="button"
-+            aria-pressed={active}
-+            disabled={disabled}
-+            onClick={() => onSelect(chip.id)}
-+            className={cn(
-+              'px-3 py-1.5 rounded-full text-xs font-medium transition-colors active:scale-95',
-+              active
-+                ? 'bg-[#4dd0e1] text-[#00363a]'
-+                : 'bg-[#1e1e23] text-[#b0b3b8] border border-[#3a3a3e]/50 hover:bg-[#2a2a2f]',
-+              disabled && 'opacity-50 pointer-events-none',
++            {freshness.detail && (
++              <span className="text-[11px] text-[#6e6e73]">{freshness.detail}</span>
 +            )}
-+          >
-+            {chip.label}
-+          </button>
-+        );
-+      })}
-+    </div>
-+  );
-+}
-diff --git a/src/utils/serverWr.ts b/src/utils/serverWr.ts
++            {cacheMeta.generationId && (
++              <span className="text-[10px] text-[#4a4a4f] font-mono" title={'Generation ' + cacheMeta.generationId}>
++                {cacheMeta.generationId.slice(-6)}
++              </span>
++            )}
++          </div>
++        )}
++
+         {/* ── B5 instrumentation badges (backend v6.9.2) ── */}
+         <div className="flex items-center gap-2 mb-4 flex-wrap">
+           {/* Core vs displayed confidence: only worth showing when filters/AI
+diff --git a/src/hooks/useScanner.ts b/src/hooks/useScanner.ts
+index 5eeb089..809bb88 100644
+--- a/src/hooks/useScanner.ts
++++ b/src/hooks/useScanner.ts
+@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
+ import { SignalData } from '../types';
+ import { fireSignalNotification, ensureNotificationPermission } from '../utils/notify';
+ import { API_BASE } from '../config';
++import { fetchLatestAll, pickFromLatestAll } from '../utils/signalCache';
+ 
+ export interface ScannerResult {
+   pair: string;
+@@ -267,14 +268,41 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
+     scanningRef.current = true;
+     setScanning(true);
+     try {
+-      const chunks = chunkPairs(pairs, BATCH_MAX_PAIRS);
+-      await Promise.all(chunks.map(group => fetchBatchGroup(group)));
++      // Phase 8 (§A6): one cache read covers every pair the worker already
++      // scans, at zero backend cost. Whatever it does not cover (OTC, exotics,
++      // anything outside SCAN_PAIRS) still goes through the existing /api/batch
++      // path, so scanner behaviour is unchanged for those pairs.
++      let remaining = pairs;
++      try {
++        const controller = new AbortController();
++        const timeoutId = setTimeout(() => controller.abort(), 15000);
++        let all;
++        try {
++          all = await fetchLatestAll({ apiBase: API_BASE, signal: controller.signal });
++        } finally { clearTimeout(timeoutId); }
++
++        const uncovered: string[] = [];
++        for (const pair of pairs) {
++          const cached = pickFromLatestAll(all, pair);
++          if (cached && cached.signal) applySignalData(pair, cached as unknown as SignalData);
++          else uncovered.push(pair);
++        }
++        remaining = uncovered;
++      } catch {
++        // Cache unavailable — fall back to the original batch scan for everything.
++        remaining = pairs;
++      }
++
++      if (remaining.length > 0) {
++        const chunks = chunkPairs(remaining, BATCH_MAX_PAIRS);
++        await Promise.all(chunks.map(group => fetchBatchGroup(group)));
++      }
+     } finally {
+       scanningRef.current = false;
+       setScanning(false);
+       setCountdown(intervalMs / 1000);
+     }
+-  }, [pairs, fetchBatchGroup, intervalMs]);
++  }, [pairs, fetchBatchGroup, applySignalData, intervalMs]);
+ 
+   // Request notification permission once on mount
+   useEffect(() => {
+diff --git a/src/utils/signalCache.ts b/src/utils/signalCache.ts
 new file mode 100644
-index 0000000..b259e7d
+index 0000000..25eb8a8
 --- /dev/null
-+++ b/src/utils/serverWr.ts
-@@ -0,0 +1,233 @@
++++ b/src/utils/signalCache.ts
+@@ -0,0 +1,230 @@
 +/**
-+ * Server Win Rate filtering — pure logic (Phase 6).
++ * Phase 8 — client side of the Phase 7 unified worker cache.
 + *
-+ * Kept out of App.tsx so the aggregation and date-window maths can be tested
-+ * without a DOM (see `scripts/phase6_smoke.mjs`). No component was moved;
-+ * App.tsx remains a single file.
++ * Pure logic only (no React, no DOM) so the routing, fallback and timer maths
++ * can be tested headlessly in `scripts/phase8_smoke.mjs`. App.tsx stays one file.
 + *
-+ * ── Data-coverage caveat, verified live 2026-07-29 ──────────────────────────
-+ * The worker keeps only MAX_SIGNALS_PER_PAIR = 50 history rows per pair and
-+ * `/api/history` supports no pagination (`offset`/`cursor`/`page` are ignored;
-+ * `limit` is capped at 50). So a windowed count derived from history is exact
-+ * only when the pair's oldest retained row predates the window cutoff.
-+ * For a busy pair (BTC/USD retains ~24h) a "Last 7 Days" figure is a LOWER
-+ * BOUND. `computeCoverage()` detects this and the UI labels it, rather than
-+ * printing a truncated number as if it were the truth.
++ * ── Endpoint contract, verified live 2026-07-29 ─────────────────────────────
++ *   GET /api/signals/latest?pair=X
++ *     200 -> full signal + { cached:true, generatedAt, generationAge,
++ *                            nextRefreshIn, generationId, stale:false }
++ *     404 -> { error:true, stale:true, scanned:<bool> }  (never scanned/expired)
++ *     400 -> invalid pair
++ *   GET /api/signal?pair=X
++ *     200 -> full signal + { cached:false, forceRefresh:true }
++ *
++ * `nextRefreshIn` was measured against two real cron boundaries: it counts down
++ * to ~0 exactly as a new generationId appears, so it is safe to drive the
++ * auto-refresh timer from it.
 + */
 +
-+import { extractHistoryRecords, WorkerHistoryRecord } from './signalMeta';
++import { SignalData } from '../types';
 +
-+export type PairScope = 'all' | 'selected';
-+export type TimeRange = 'all' | 'today' | '7d';
++export type SignalSource = 'cache' | 'fresh' | 'cache_miss_fallback';
 +
-+export interface ServerWrFilter {
-+  pairScope: PairScope;
-+  timeRange: TimeRange;
++/** Cache metadata the worker adds on top of a normal signal payload. */
++export interface CacheMeta {
++  cached?: boolean;
++  generatedAt?: string;
++  generationAge?: number;   // seconds since generation
++  nextRefreshIn?: number;   // seconds until the next scheduled scan
++  generationId?: string;
++  opportunistic?: boolean;  // warmed by a user request, not by the cron
++  stale?: boolean;
++  forceRefresh?: boolean;
++  /** set by this client, not the worker */
++  fallback?: 'cache_miss';
++  source?: SignalSource;
 +}
 +
-+export const DEFAULT_SERVER_WR_FILTER: ServerWrFilter = {
-+  pairScope: 'selected',
-+  timeRange: 'all',
-+};
++export type CachedSignalData = SignalData & CacheMeta;
 +
-+export const SERVER_WR_FILTER_KEY = 'ftt_server_wr_filter';
++/** Worker default when nextRefreshIn is missing — matches SCAN_INTERVAL. */
++export const DEFAULT_REFRESH_SECONDS = 60;
++export const SCAN_INTERVAL_SECONDS = 300;
++/** Small buffer so we never poll a fraction of a second before the scan lands. */
++export const REFRESH_BUFFER_MS = 3000;
 +
-+const PAIR_SCOPES: PairScope[] = ['all', 'selected'];
-+const TIME_RANGES: TimeRange[] = ['all', 'today', '7d'];
++export function cleanPairForApi(pair: string): string {
++  return pair.replace(/\//g, '').toLowerCase();
++}
 +
-+/** Parse persisted filter defensively — a hand-edited or stale value must not crash the tab. */
-+export function parseServerWrFilter(raw: unknown): ServerWrFilter {
-+  let value: unknown = raw;
-+  if (typeof raw === 'string') {
-+    try { value = JSON.parse(raw); } catch { return { ...DEFAULT_SERVER_WR_FILTER }; }
++/**
++ * How long to wait before the next automatic fetch.
++ *
++ * Driven by the server's own countdown so the App wakes up just after a new
++ * generation lands instead of on an arbitrary 60s tick. Falls back to the old
++ * fixed interval whenever the field is missing or nonsensical, so a worker
++ * change can never leave the App without a refresh loop.
++ */
++export function computeRefreshDelayMs(
++  nextRefreshIn: unknown,
++  fallbackSeconds: number = DEFAULT_REFRESH_SECONDS,
++): number {
++  const n = typeof nextRefreshIn === 'number' && Number.isFinite(nextRefreshIn)
++    ? nextRefreshIn
++    : NaN;
++  if (Number.isNaN(n)) return fallbackSeconds * 1000;
++  // Guard both ends: never hammer (<5s) and never sleep past one scan cycle.
++  const clamped = Math.min(Math.max(n, 5), SCAN_INTERVAL_SECONDS);
++  return clamped * 1000 + REFRESH_BUFFER_MS;
++}
++
++/** "4m 13s" / "47s" — for the freshness pill countdown. */
++export function formatCountdown(seconds: unknown): string {
++  const s = typeof seconds === 'number' && Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : null;
++  if (s === null) return '—';
++  if (s < 60) return `${s}s`;
++  const m = Math.floor(s / 60);
++  const rem = s % 60;
++  return rem === 0 ? `${m}m` : `${m}m ${rem}s`;
++}
++
++/** "Generated 47s ago" / "Generated 2m 5s ago". */
++export function formatAge(seconds: unknown): string {
++  const s = typeof seconds === 'number' && Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : null;
++  if (s === null) return 'just now';
++  if (s < 5) return 'just now';
++  return `${formatCountdown(s)} ago`;
++}
++
++export interface FreshnessBadge {
++  kind: 'cached' | 'live' | 'on_demand';
++  label: string;
++  detail: string | null;
++  className: string;
++}
++
++/**
++ * What the freshness pill should say (spec §A.5).
++ *  - cron cache      -> "Generated 47s ago" + next-refresh countdown
++ *  - fresh generation-> "LIVE — just generated"
++ *  - cache miss      -> amber "On-demand — pair not in scheduled scan"
++ */
++export function freshnessBadge(data: CachedSignalData | null): FreshnessBadge | null {
++  if (!data) return null;
++
++  if (data.fallback === 'cache_miss' || data.source === 'cache_miss_fallback') {
++    return {
++      kind: 'on_demand',
++      label: 'On-demand',
++      detail: 'pair not in scheduled scan',
++      className: 'bg-[#ffb74d]/15 text-[#ffb74d]',
++    };
 +  }
-+  if (!value || typeof value !== 'object') return { ...DEFAULT_SERVER_WR_FILTER };
-+  const v = value as Partial<ServerWrFilter>;
++  if (data.cached === true) {
++    return {
++      kind: 'cached',
++      label: `Generated ${formatAge(data.generationAge)}`,
++      detail: typeof data.nextRefreshIn === 'number'
++        ? `Next refresh in ${formatCountdown(data.nextRefreshIn)}`
++        : null,
++      className: 'bg-[#42a5f5]/15 text-[#42a5f5]',
++    };
++  }
 +  return {
-+    pairScope: PAIR_SCOPES.includes(v.pairScope as PairScope)
-+      ? (v.pairScope as PairScope) : DEFAULT_SERVER_WR_FILTER.pairScope,
-+    timeRange: TIME_RANGES.includes(v.timeRange as TimeRange)
-+      ? (v.timeRange as TimeRange) : DEFAULT_SERVER_WR_FILTER.timeRange,
++    kind: 'live',
++    label: 'LIVE',
++    detail: 'just generated',
++    className: 'bg-[#ef5350]/15 text-[#ef5350]',
 +  };
 +}
 +
-+export function sameFilter(a?: ServerWrFilter | null, b?: ServerWrFilter | null): boolean {
-+  if (!a || !b) return false;
-+  return a.pairScope === b.pairScope && a.timeRange === b.timeRange;
++export interface FetchDeps {
++  apiBase: string;
++  signal?: AbortSignal;
++  /** injectable for tests */
++  fetchImpl?: typeof fetch;
 +}
 +
-+export function filterCacheKey(filter: ServerWrFilter, selectedPair: string): string {
-+  // selected-pair scope is pair-specific; "all" scope is not
-+  return filter.pairScope === 'selected'
-+    ? `selected:${selectedPair}:${filter.timeRange}`
-+    : `all:${filter.timeRange}`;
-+}
-+
-+/**
-+ * Start of the window, in epoch ms. `today` uses LOCAL midnight (the user's
-+ * day, not UTC's) — deliberate: "Today" should mean today where the user is.
-+ */
-+export function windowCutoff(timeRange: TimeRange, now: number = Date.now()): number {
-+  if (timeRange === 'today') {
-+    const d = new Date(now);
-+    d.setHours(0, 0, 0, 0);
-+    return d.getTime();
-+  }
-+  if (timeRange === '7d') return now - 7 * 24 * 60 * 60 * 1000;
-+  return 0;
-+}
-+
-+export const TIME_RANGE_LABEL: Record<TimeRange, string> = {
-+  all: 'All time',
-+  today: 'Today',
-+  '7d': 'Last 7 days',
-+};
-+
-+/** Card subtitle for the active filter (spec §4.3). */
-+export function filterSubtitle(filter: ServerWrFilter, selectedPair: string): string {
-+  const scope = filter.pairScope === 'all' ? 'All pairs' : selectedPair;
-+  if (filter.pairScope === 'selected' && filter.timeRange === 'all') {
-+    return `All users · ${selectedPair}`;   // preserve the existing wording
-+  }
-+  return `${scope} · ${TIME_RANGE_LABEL[filter.timeRange]}`;
-+}
-+
-+// ── /api/stats aggregation ─────────────────────────────────────────────
-+export interface StatsPairRow {
-+  pair: string;
-+  wins?: number;
-+  losses?: number;
-+  totalSignals?: number;
-+  winRate?: number;
-+  lastUpdated?: string;
-+}
-+
-+export interface AggregateResult {
-+  totalWins: number;
-+  totalLosses: number;
-+  totalSignals: number;   // decided count (wins + losses)
-+  winRate: number;        // 0..1
-+  pairCount: number;
-+  lastUpdated?: string;
++export interface FetchOutcome {
++  data: CachedSignalData;
++  source: SignalSource;
 +}
 +
 +/**
-+ * All Pairs + All Time, from `/api/stats` (no pair).
-+ *
-+ * WR denominator is wins+losses (decided only), per the spec's "prefer
-+ * decided-only for WR honesty". Note: live data shows totalSignals ALWAYS
-+ * equals wins+losses for every pair, i.e. the worker's `totalSignals` counter
-+ * is only incremented for decided results — UNKNOWN never lands in stats at
-+ * all (updatePairStats early-returns on UNKNOWN). So the two are identical
-+ * today; using wins+losses keeps that true even if the worker changes.
++ * Normal view: read the cron cache, fall back to a fresh run only when the pair
++ * is not cached (404). Any other status is a real error and is thrown so the
++ * existing error UI handles it.
 + */
-+export function aggregateAllPairs(pairs: StatsPairRow[]): AggregateResult {
-+  let totalWins = 0;
-+  let totalLosses = 0;
-+  let latest: number | null = null;
-+  let pairCount = 0;
++export async function fetchCachedSignal(pair: string, deps: FetchDeps): Promise<FetchOutcome> {
++  const f = deps.fetchImpl || fetch;
++  const clean = cleanPairForApi(pair);
 +
-+  for (const p of pairs) {
-+    const w = Number(p?.wins) || 0;
-+    const l = Number(p?.losses) || 0;
-+    totalWins += w;
-+    totalLosses += l;
-+    if (w + l > 0) pairCount++;
-+    if (p?.lastUpdated) {
-+      const t = new Date(p.lastUpdated).getTime();
-+      if (!Number.isNaN(t) && (latest === null || t > latest)) latest = t;
++  const cacheRes = await f(
++    `${deps.apiBase}/api/signals/latest?pair=${encodeURIComponent(clean)}`,
++    { signal: deps.signal },
++  );
++
++  if (cacheRes.ok) {
++    const data = await cacheRes.json();
++    // Defensive: a 200 that somehow carries no signal is treated as a miss
++    // rather than rendered as an empty card.
++    if (data && data.signal) {
++      return { data: { ...data, source: 'cache' }, source: 'cache' };
 +    }
++  } else if (cacheRes.status !== 404) {
++    throw new Error(`HTTP ${cacheRes.status}`);
 +  }
 +
-+  const decided = totalWins + totalLosses;
++  // 404 (never scanned / expired) or a 200 without a signal -> generate fresh
++  const freshRes = await f(
++    `${deps.apiBase}/api/signal?pair=${encodeURIComponent(clean)}`,
++    { signal: deps.signal },
++  );
++  if (!freshRes.ok) throw new Error(`HTTP ${freshRes.status}`);
++  const fresh = await freshRes.json();
 +  return {
-+    totalWins,
-+    totalLosses,
-+    totalSignals: decided,
-+    winRate: decided > 0 ? totalWins / decided : 0,
-+    pairCount,
-+    lastUpdated: latest !== null ? new Date(latest).toISOString() : undefined,
++    data: { ...fresh, cached: false, fallback: 'cache_miss', source: 'cache_miss_fallback' },
++    source: 'cache_miss_fallback',
 +  };
 +}
 +
-+// ── history-derived windowed counts ────────────────────────────────────
-+export interface WindowedCount {
-+  wins: number;
-+  losses: number;
-+  decided: number;
-+  recordsConsidered: number;
-+  /** false when the 50-row cap may hide older rows inside the window. */
-+  complete: boolean;
++/** Force Refresh: always a fresh engine run, never the cache. */
++export async function fetchFreshSignal(pair: string, deps: FetchDeps): Promise<FetchOutcome> {
++  const f = deps.fetchImpl || fetch;
++  const clean = cleanPairForApi(pair);
++  const res = await f(
++    `${deps.apiBase}/api/signal?pair=${encodeURIComponent(clean)}`,
++    { signal: deps.signal },
++  );
++  if (!res.ok) throw new Error(`HTTP ${res.status}`);
++  const data = await res.json();
++  return { data: { ...data, cached: false, source: 'fresh' }, source: 'fresh' };
++}
++
++// ── scanner support ────────────────────────────────────────────────────
++export interface LatestAllResponse {
++  signals?: Record<string, CachedSignalData>;
++  pairCount?: number;
++  scannedPairs?: string[];
++  oldestCachedAge?: number;
++  newestCachedAge?: number;
 +}
 +
 +/**
-+ * Count decided results at or after `cutoff` in one pair's history payload.
-+ *
-+ * `complete` is false when the response is at the 50-row cap AND the oldest
-+ * retained row is itself newer than the cutoff — meaning rows inside the
-+ * window have already been evicted, so the count is a lower bound.
++ * Pull the whole cache in one request (spec §A6). One round trip replaces the
++ * scanner's per-group /api/batch calls for every pair the cron already covers.
 + */
-+export function countWindowed(payload: unknown, cutoff: number): WindowedCount {
-+  const records = extractHistoryRecords(payload) as Array<WorkerHistoryRecord & { timestamp?: string }>;
-+  let wins = 0;
-+  let losses = 0;
-+  let considered = 0;
-+  let oldest: number | null = null;
-+
-+  for (const r of records) {
-+    const ts = r?.timestamp ? new Date(r.timestamp).getTime() : NaN;
-+    if (!Number.isNaN(ts)) {
-+      if (oldest === null || ts < oldest) oldest = ts;
-+    }
-+    if (Number.isNaN(ts) || ts < cutoff) continue;
-+    considered++;
-+    if (r.result === 'WIN') wins++;
-+    else if (r.result === 'LOSS') losses++;
-+  }
-+
-+  const atCap = records.length >= HISTORY_ROW_CAP;
-+  const complete = cutoff === 0
-+    ? !atCap                                   // "all time" is only exact below the cap
-+    : !(atCap && oldest !== null && oldest > cutoff);
-+
-+  return { wins, losses, decided: wins + losses, recordsConsidered: considered, complete };
++export async function fetchLatestAll(deps: FetchDeps): Promise<LatestAllResponse> {
++  const f = deps.fetchImpl || fetch;
++  const res = await f(`${deps.apiBase}/api/signals/latest`, { signal: deps.signal });
++  if (!res.ok) throw new Error(`HTTP ${res.status}`);
++  const data = await res.json();
++  return data && typeof data === 'object' ? data : {};
 +}
 +
-+/** Worker-side MAX_SIGNALS_PER_PAIR; /api/history cannot return more than this. */
-+export const HISTORY_ROW_CAP = 50;
-+
-+export interface CoverageSummary {
-+  complete: boolean;
-+  truncatedPairs: string[];
-+}
-+
-+/** Merge per-pair windowed counts into one aggregate plus a coverage verdict. */
-+export function combineWindowed(
-+  entries: Array<{ pair: string; count: WindowedCount | null }>,
-+): AggregateResult & { coverage: CoverageSummary; recordsConsidered: number } {
-+  let totalWins = 0;
-+  let totalLosses = 0;
-+  let recordsConsidered = 0;
-+  let pairCount = 0;
-+  const truncatedPairs: string[] = [];
-+
-+  for (const { pair, count } of entries) {
-+    if (!count) continue;
-+    totalWins += count.wins;
-+    totalLosses += count.losses;
-+    recordsConsidered += count.recordsConsidered;
-+    if (!count.complete) truncatedPairs.push(pair);
-+    if (count.decided > 0) pairCount++;
++/** Case/format-insensitive lookup into the all-pairs map ("BTCUSD" -> "BTC/USD"). */
++export function pickFromLatestAll(
++  all: LatestAllResponse,
++  pair: string,
++): CachedSignalData | null {
++  const signals = all && all.signals;
++  if (!signals) return null;
++  if (signals[pair]) return signals[pair];
++  const want = pair.toUpperCase().replace(/[^A-Z]/g, '');
++  for (const key of Object.keys(signals)) {
++    if (key.toUpperCase().replace(/[^A-Z]/g, '') === want) return signals[key];
 +  }
-+
-+  const decided = totalWins + totalLosses;
-+  return {
-+    totalWins,
-+    totalLosses,
-+    totalSignals: decided,
-+    winRate: decided > 0 ? totalWins / decided : 0,
-+    pairCount,
-+    recordsConsidered,
-+    coverage: { complete: truncatedPairs.length === 0, truncatedPairs },
-+  };
++  return null;
 +}

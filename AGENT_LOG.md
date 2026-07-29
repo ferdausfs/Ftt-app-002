@@ -1,5 +1,72 @@
 # AGENT_LOG
 
+## 2026-07-29 — Phase 8: read the unified worker cache (NOT deployed)
+
+### Scope
+App-only. Base `97d8238`. 4 files: 2 modified, 1 new module, 1 test script.
+574 insertions / 19 deletions. Backend untouched (Phase 7 cache already live).
+
+### Live-verified first (§A.2) — spec was correct this time
+All four A.2 curls matched: cache metadata complete (`cached`, `generatedAt`,
+`generationAge`, `nextRefreshIn`, `generationId`, `stale`, `opportunistic`),
+`preferCache=true` works, all-pairs list returns 14, and the four B5 fields
+survive caching. Cache misses (USD/CHF, NZD/USD, EURUSD-OTC) answer 404 with
+`scanned:false`, and `/api/signal` still serves them fresh.
+
+**Measured `nextRefreshIn` before trusting it with the refresh timer.** Polled
+BTC/USD every 15s for six minutes and caught two real cron boundaries: the
+countdown reaches ~0 exactly as a new `generationId` appears (67->6 then new gen;
+12 -> new gen). The field is reliable, so the auto-refresh loop is now driven by
+it instead of a flat 60s tick.
+
+### Changes
+- `utils/signalCache.ts` (new) — routing, fallback, badge and timer maths as pure
+  functions so they can be tested without a DOM. App.tsx stays one file.
+- `App.tsx` — `fetchSignal(silent, forceFresh)`. Normal views call
+  `fetchCachedSignal()` (`/api/signals/latest`); Force Refresh calls
+  `fetchFreshSignal()` (`/api/signal`). Every Phase 5 guard is untouched:
+  abort-and-supersede, monotonic seq, 25s timeout, conditional finally.
+- Freshness pill with three states — cached ("Generated 47s ago · Next refresh in
+  4m 13s" + short generationId), LIVE, and amber on-demand for a cache-miss
+  fallback.
+- Second toolbar button: 🔄 re-reads the cache, ⚡ forces an engine run.
+- `useScanner.ts` — one `/api/signals/latest` read covers every scanned pair;
+  anything uncovered (OTC, exotics) still goes through the existing `/api/batch`
+  path, so scanner behaviour is unchanged for those.
+
+### Two deliberate deviations from the spec sketch
+- **Only 404 triggers the fresh fallback.** A 500 or a network error throws to the
+  existing error UI. Falling back on any failure would have every view hammer the
+  engine exactly when the backend is already unhealthy.
+- **A 200 without a `signal` is treated as a miss** rather than rendered as an
+  empty card.
+
+### Subtle bug avoided
+The auto-refresh effect used to reset `nextRefreshAtRef` to `now + 60000` on every
+run. Leaving that would have silently erased the cron-synced schedule on each
+re-render — the timer sync would have looked correct in code and behaved as a flat
+60s poll in practice. The effect now only seeds the schedule when it is already in
+the past.
+
+### Verification
+build pass · `tsc --noEmit` 0 errors · smoke **75/75** · bundle **+3.54 KB raw /
++0.99 KB gzip** (budget <10 KB). Smoke asserts routing URL-by-URL, the timer maths
+against the measured values (253->256s, 0->8s floor, 99999->303s cap,
+undefined/null/NaN/string->60s fallback), plus 8 Phase 5 and 4 Phase 6 regression
+checks. Freshness pill rendered with compiled Tailwind: `verify/p8_pill.png`.
+
+### Open
+- A cache hit writes the cron's `id` into local history — intended (that is what
+  makes App and Bot cross-verifiable), but it means one signal id can be reported
+  from several devices; `/api/report` is last-write-wins.
+- Auto-refresh is now effectively every 5 minutes rather than 60s, because that is
+  how often the data actually changes. The countdown pill makes this visible.
+- `preferCache=true` was deliberately not used: it hides whether a fallback
+  happened, which would make the freshness badge lie.
+
+---
+
+
 ## 2026-07-29 — Phase 6: Server Win Rate filters (pair scope + time range)
 
 ### Scope
