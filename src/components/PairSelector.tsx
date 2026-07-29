@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, X, Star, TrendingUp } from 'lucide-react';
+import { Search, X, Star } from 'lucide-react';
 import { cn, haptic } from '../utils/cn';
 
 interface Props {
@@ -11,10 +11,10 @@ interface Props {
   onToggleFavorite: (pair: string) => void;
 }
 
+// Commodities (XAU/XAG/WTI) intentionally absent — no backend support.
 const ALL_PAIRS = {
   'Forex Majors': ['EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 'AUD/USD', 'NZD/USD', 'USD/CAD'],
   'Forex Crosses': ['EUR/GBP', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'EUR/AUD', 'GBP/CHF', 'CHF/JPY'],
-  'Commodities': ['XAU/USD', 'XAG/USD', 'WTI/USD'],
   'Crypto': ['BTC/USD', 'ETH/USD', 'XRP/USD', 'LTC/USD', 'BNB/USD', 'SOL/USD'],
   'OTC': ['EURUSD-OTC', 'GBPUSD-OTC', 'USDJPY-OTC', 'AUDCAD-OTC', 'EURGBP-OTC']
 };
@@ -174,7 +174,6 @@ function PairItem({
 }) {
   const isOTC = pair.includes('OTC');
   const isCrypto = ['BTC', 'ETH', 'XRP', 'LTC', 'BNB', 'SOL'].some(c => pair.includes(c));
-  const isCommodity = pair.startsWith('XAU') || pair.startsWith('XAG') || pair.startsWith('WTI');
 
   return (
     <div className={cn(
@@ -187,15 +186,14 @@ function PairItem({
           "w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold",
           isOTC ? "bg-[#ff9f0a]/20 text-[#ff9f0a]" :
           isCrypto ? "bg-[#bf5af2]/20 text-[#bf5af2]" :
-          isCommodity ? "bg-[#ffd60a]/20 text-[#ffd60a]" :
           "bg-[#0a84ff]/20 text-[#0a84ff]"
         )}>
-          {isOTC ? 'OTC' : isCrypto ? '₿' : isCommodity ? <TrendingUp className="w-4 h-4" /> : pair.slice(0, 2)}
+          {isOTC ? 'OTC' : isCrypto ? '₿' : pair.slice(0, 2)}
         </div>
         <div>
           <div className="text-white font-semibold text-[15px]">{pair}</div>
           <div className="text-white/40 text-xs">
-            {isOTC ? 'Over-the-counter' : isCrypto ? 'Cryptocurrency' : isCommodity ? 'Commodity' : 'Forex Pair'}
+            {isOTC ? 'Over-the-counter' : isCrypto ? 'Cryptocurrency' : 'Forex Pair'}
           </div>
         </div>
       </div>

@@ -99,6 +99,8 @@ export interface SignalData {
   signal: {
     finalSignal: 'BUY' | 'SELL' | 'NEUTRAL' | 'NO_TRADE';
     confidence: string;
+    // Backend v6.9.2 (B5): engine confidence BEFORE filters/AI adjustment.
+    coreConfidence?: number;
     grade: {
       grade: string;
       label: string;
@@ -182,7 +184,20 @@ export interface SignalData {
   timestamp: string;
   nextRefresh?: string;
   cacheHits?: number;
+  // Backend v6.9.2: which candles backed this signal (0 cache hits = FRESH_API,
+  // 1-2 = CACHE_PARTIAL, 3 = CACHE_ALL). Present on the response body.
+  entrySource?: string;
   dataStatus?: Record<string, string>;
+  // Backend v6.9.2 per-pair circuit breaker. Present only while a pair is in
+  // cooldown; the signal is forced to NO_TRADE but still recorded as a shadow
+  // row server-side, so `wouldBeSignal` carries the suppressed direction.
+  circuitBreaker?: {
+    tripped: boolean;
+    cooldownUntil: string;
+    lossStreak?: number;
+    wouldBeSignal?: string;
+    cbShadow?: boolean;
+  };
 }
 
 export interface HistoryItem {
@@ -201,4 +216,12 @@ export interface SignalStats {
   losses: number;
   total: number;
   winRate: number;
+}
+
+export interface WorkerHealth {
+  status?: string;
+  version?: string;
+  apiKeysLoaded?: number;
+  quotaUsedToday?: number;
+  rotationIdx?: number;
 }

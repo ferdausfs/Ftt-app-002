@@ -29,7 +29,10 @@ interface BatchResponse {
 
 const STORAGE_KEY = 'ftt_scanner_pairs';
 const SEEN_KEY = 'ftt_scanner_seen'; // map pair -> last consumed signalKey
-const DEFAULT_PAIRS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'XAU/USD', 'EURUSD-OTC'];
+// XAU/USD removed — the backend has no gold support and always answers
+// "Invalid pair", so the scanner row was permanently stuck on `error`.
+// BTC/USD replaces it: crypto, 24/7, high liquidity.
+const DEFAULT_PAIRS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'BTC/USD', 'EURUSD-OTC'];
 const BATCH_MAX_PAIRS = 3;
 
 function loadPairs(): string[] {
@@ -188,7 +191,9 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
   const fetchOne = useCallback(async (pair: string) => {
     setResults(prev => ({ ...prev, [pair]: { ...prev[pair], pair, status: 'loading' } }));
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    // BUG #2: 12s was too tight once backend AI validation + a slow mobile
+    // network stack up. Scanner is background work, so it can wait longer.
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
     try {
       const cleanPair = cleanPairForSignal(pair);
       const res = await fetch(`${API_BASE}/api/signal?pair=${encodeURIComponent(cleanPair)}`, { signal: controller.signal });
@@ -210,7 +215,9 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
     });
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    // BUG #2: /api/batch fans out to 3 pairs server-side; 12s was routinely
+    // short of the p90 and showed the whole group as `error`.
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
     try {
       const params = new URLSearchParams({ pairs: group.join(',') });
       const res = await fetch(`${API_BASE}/api/batch?${params.toString()}`, { signal: controller.signal });

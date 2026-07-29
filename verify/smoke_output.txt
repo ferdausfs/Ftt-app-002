@@ -1,0 +1,75 @@
+# Part 4.4 — automated smoke tests
+$ node scripts/phase5_smoke.mjs
+
+── /api/history payload shape ─────────────────────────────
+PASS  extracts rows from { signals: [...] }
+PASS  tolerates a bare array too
+PASS  null payload -> []
+PASS  garbage payload -> []
+
+── reconcileHistory ───────────────────────────────────────
+PASS  WIN/LOSS applied to pending row
+PASS  resolved row marked autoChecked
+PASS  resolved row marked synced
+PASS  B5 fields backfilled
+PASS  entrySource backfilled
+PASS  UNKNOWN leaves row pending
+PASS  manual result never overwritten
+PASS  row absent from worker untouched
+PASS  same reference when nothing changed
+PASS  new reference when something changed
+PASS  existing local B5 value not clobbered
+
+── deriveAiStatus ─────────────────────────────────────────
+PASS  dual-AI consensus
+PASS  dual-AI split
+PASS  both offline
+PASS  explicitly skipped
+PASS  OTC agree
+PASS  OTC disagree
+PASS  no aiValidation at all
+PASS  missing signal object
+
+── aiStatusBadge ──────────────────────────────────────────
+PASS  BOTH_AGREE -> green consensus
+PASS  AIs_DISAGREE -> split
+PASS  BOTH_UNAVAILABLE -> offline
+PASS  SKIPPED hidden
+PASS  undefined hidden
+
+── unsupported symbols (BUG #5) ───────────────────────────
+PASS  XAU/USD rejected
+PASS  XAG/USD rejected
+PASS  WTI/USD rejected
+PASS  lowercase xauusd rejected
+PASS  EUR/USD kept
+PASS  BTC/USD kept
+PASS  EURUSD-OTC kept
+PASS  non-string rejected
+PASS  stale favourite filtered on load
+
+── entry source labels ────────────────────────────────────
+PASS  FRESH_API label
+PASS  CACHE_PARTIAL label
+PASS  CACHE_ALL label
+
+── fetchSignal supersede model (BUG #1/#2) ────────────────
+PASS  older request is aborted, not ignored
+PASS  superseded response writes nothing
+PASS  newest response wins
+PASS  spinner released exactly once
+PASS  aborted older request shows no error
+PASS  fresh request still renders
+
+── timeout budget ─────────────────────────────────────────
+PASS  App fetchSignal timeout is 25s
+PASS  no 15s timeout left in App
+PASS  scanner timeouts raised to 20s
+PASS  no 12s timeout left in scanner
+PASS  client auto-checker removed
+PASS  history poll present
+PASS  manual report flow retained
+
+───────────────────────────────────────────────────────────
+PASS: 53   FAIL: 0
+ALL PHASE 5 SMOKE TESTS PASSED

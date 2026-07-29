@@ -1,0 +1,28 @@
+# Part 4.1 — npm install && npm run build
+$ npm run build
+
+
+> react-vite-tailwind@0.0.0 build
+> vite build
+
+vite v7.3.2 building client environment for production...
+transforming...
+✓ 1763 modules transformed.
+rendering chunks...
+[plugin vite:singlefile] 
+
+[plugin vite:singlefile] Inlining: index-DtSqs0od.js
+[plugin vite:singlefile] Inlining: style-Wj1TVnjz.css
+computing gzip size...
+dist/index.html  316.57 kB │ gzip: 89.52 kB
+✓ built in 2.74s
+
+# TypeScript strict check (tsc --noEmit, tsconfig strict:true)
+$ npx tsc --noEmit
+(0 errors)
+
+# Part 4.5 — build size before/after
+baseline dist/  : 953653 bytes (index.html 305.35 kB, gzip 86.98 kB)
+this round dist/: 964866 bytes (index.html 316.57 kB, gzip 89.52 kB)
+delta           : +11,213 bytes (+10.9 KB) — budget was <20 KB growth  ->  PASS
+                  index.html +11.22 kB raw / +2.54 kB gzip

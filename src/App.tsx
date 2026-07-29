@@ -28,7 +28,13 @@ import { SignalData, TimeframeRec } from './types';
 import { cn } from './utils/cn';
 import { PairSelector } from './components/PairSelector';
 import { ScannerView } from './components/ScannerView';
+import { CircuitBreakerCard } from './components/CircuitBreakerCard';
+import { HealthPill } from './components/HealthPill';
 import { API_BASE } from './config';
+import {
+  deriveAiStatus, aiStatusBadge, isSupportedPair, ENTRY_SOURCE_LABEL,
+  extractHistoryRecords, reconcileHistory,
+} from './utils/signalMeta';
 
 interface HistoryEntry {
   id: string;
@@ -49,6 +55,12 @@ interface HistoryEntry {
   expiryTime?: number; // ms epoch when this trade expires
   aiAgree?: boolean;
   autoChecked?: boolean; // true if result was set by auto win/loss check
+  // ── B5 diagnostics (backend v6.9.2). All optional: entries written by an
+  // older build stay valid, the row just renders without these badges. ──
+  structureVerdict?: string;  // 'ALIGNED' | 'MIXED' | 'AGAINST' | 'NEUTRAL' | 'N/A'
+  aiStatus?: string;          // 'BOTH_AGREE' | 'AIs_DISAGREE' | 'BOTH_UNAVAILABLE' | ...
+  coreConfidence?: number;    // engine confidence before filters/AI adjustment
+  entrySource?: string;       // 'FRESH_API' | 'CACHE_PARTIAL' | 'CACHE_ALL'
   reportable?: boolean; // false when no worker signal ID exists (local-only fallback)
   reportStatus?: 'syncing' | 'synced' | 'failed';
   reportError?: string;
@@ -79,6 +91,8 @@ interface ServerStatsState {
 
 type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner';
 
+const DEFAULT_FAVORITES = ['EUR/USD', 'GBP/USD', 'BTC/USD'];
+
 export default function App() {
   const [selectedPair, setSelectedPair] = useState(() => {
     try { return localStorage.getItem('ftt_selected_pair') || 'EUR/USD'; } catch { return 'EUR/USD'; }
@@ -91,8 +105,13 @@ export default function App() {
   const [favorites, setFavorites] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('ftt_favorites');
-      return saved ? JSON.parse(saved) : ['EUR/USD', 'GBP/USD', 'XAU/USD'];
-    } catch { return ['EUR/USD', 'GBP/USD', 'XAU/USD']; }
+      // XAU/USD dropped — backend rejects gold ("Invalid pair"). BTC/USD instead.
+      const parsed: string[] = saved ? JSON.parse(saved) : DEFAULT_FAVORITES;
+      // Strip unsupported symbols that may still be sitting in localStorage
+      // from a previous install, otherwise the old favourite keeps 404-ing.
+      const cleaned = Array.isArray(parsed) ? parsed.filter(isSupportedPair) : DEFAULT_FAVORITES;
+      return cleaned.length > 0 ? cleaned : DEFAULT_FAVORITES;
+    } catch { return DEFAULT_FAVORITES; }
   });
 
   const toggleFavorite = (pair: string) => {
@@ -124,18 +143,28 @@ export default function App() {
 
   const fetchAbortRef = useRef<AbortController | null>(null);
   const fetchInFlightRef = useRef(false);
+  // Monotonic id: only the newest request is allowed to write state. Guards
+  // against a slow earlier response landing after a newer one (last-write-wins
+  // would otherwise show stale data).
+  const fetchSeqRef = useRef(0);
 
   const fetchSignal = useCallback(async (silent = false) => {
-    // Prevent overlapping requests (a previous slow/hung request could
-    // otherwise keep `loading=true` forever and block the UI)
-    if (fetchInFlightRef.current) return;
+    // BUG #1 fix: previously this early-returned whenever a fetch was in
+    // flight, so tapping Retry during a slow request did *nothing* — no
+    // spinner, no error, no request. The user read that as "button dead".
+    // Now the in-flight request is aborted and superseded by this one.
+    if (fetchInFlightRef.current && fetchAbortRef.current) {
+      fetchAbortRef.current.abort();
+    }
     fetchInFlightRef.current = true;
 
-    // Abort any previous in-flight request just in case
-    fetchAbortRef.current?.abort();
+    const mySeq = ++fetchSeqRef.current;
     const controller = new AbortController();
     fetchAbortRef.current = controller;
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s hard timeout
+    // BUG #2 fix: 15s was too tight. Backend worst case = candles (~2-4s) +
+    // Cerebras + Groq (~3-5s) + engine (~1s), plus Cloudflare cold start and a
+    // slow mobile network. 25s covers the p90 without hanging the UI forever.
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
 
     if (!silent) setLoading(true);
     setError(null);
@@ -151,8 +180,15 @@ export default function App() {
         throw new Error('Invalid response');
       }
 
-      // If the user switched pairs while this request was in flight, drop it
-      if (requestedPair !== selectedPair) return;
+      // BUG #3: the user switched pairs (or a newer fetch started) while this
+      // request was in flight — dropping is semantically right, but log it so
+      // the "stuck loading" reports are diagnosable from the console.
+      if (requestedPair !== selectedPair || mySeq !== fetchSeqRef.current) {
+        console.warn('fetchSignal: superseded, dropping result', {
+          requestedPair, currentPair: selectedPair, mySeq, latestSeq: fetchSeqRef.current,
+        });
+        return;
+      }
 
       setSignalData(data);
       setLastUpdated(new Date());
@@ -191,6 +227,12 @@ export default function App() {
           expiryMinutes,
           expiryTime: expiryMinutes ? Date.now() + expiryMinutes * 60000 : undefined,
           aiAgree: data.signal.aiValidation?.agrees,
+          // B5 fields — structureVerdict/coreConfidence come off the signal,
+          // entrySource is a top-level response field (verified live).
+          structureVerdict: data.signal.structureVerdict?.overall,
+          aiStatus: deriveAiStatus(data),
+          coreConfidence: data.signal.coreConfidence,
+          entrySource: data.entrySource,
           reportable: Boolean(workerSignalId),
         };
         setHistory(prev => {
@@ -199,6 +241,9 @@ export default function App() {
         });
       }
     } catch (e: any) {
+      // A superseded request always aborts; that is not a user-visible error.
+      // Only surface a failure if this is still the request the user waits on.
+      if (mySeq !== fetchSeqRef.current) return;
       if (e?.name === 'AbortError') {
         setError('Request timed out. Tap retry.');
       } else {
@@ -206,8 +251,12 @@ export default function App() {
       }
     } finally {
       clearTimeout(timeoutId);
-      fetchInFlightRef.current = false;
-      setLoading(false);
+      // Only the newest request clears the shared in-flight/loading state —
+      // an aborted older one must not unlock the spinner for a live request.
+      if (mySeq === fetchSeqRef.current) {
+        fetchInFlightRef.current = false;
+        setLoading(false);
+      }
     }
   }, [selectedPair]);
 
@@ -215,7 +264,15 @@ export default function App() {
     try { localStorage.setItem('ftt_history', JSON.stringify(history)); } catch {}
   }, [history]);
 
-  useEffect(() => { fetchSignal(); try { localStorage.setItem('ftt_selected_pair', selectedPair); } catch {} }, [selectedPair]);
+  // BUG #6 fix: clear the previous pair's signal before fetching the new one.
+  // Without this the old pair's card stayed on screen for the whole 5-8s fetch,
+  // so the user briefly read BTC numbers under an EUR/USD heading.
+  useEffect(() => {
+    setSignalData(null);
+    setError(null);
+    fetchSignal();
+    try { localStorage.setItem('ftt_selected_pair', selectedPair); } catch {}
+  }, [selectedPair]);
 
   // Auto-refresh: timestamp-based (not tick-counter-based) so it's resilient
   // to the tab/screen being backgrounded for a long time. When the page
@@ -303,85 +360,68 @@ export default function App() {
     }
   };
 
-  // Auto WIN/LOSS checker: every 30s, check PENDING entries whose expiry has
-  // passed, fetch current price for that pair, and compare vs entry price.
-  // Uses a ref for `history` so the interval is created ONCE, not re-created
-  // every time history changes (which previously caused timer churn).
-
+  // BUG #4 fix — the client-side auto WIN/LOSS checker is gone.
+  //
+  // It called `/api/signal?pair=...` purely to read a current price, which made
+  // the worker run a full signal generation (candles + Cerebras + Groq + engine)
+  // and burn TwelveData quota for every check. It also processed only `due[0]`
+  // per 30s tick, so five expired signals took 150s to resolve.
+  //
+  // Backend v6.9.2 now resolves results authoritatively: cron `*/2 * * * *`
+  // plus the B0-3 retry ladder (15 attempts before giving up as UNKNOWN).
+  // The app is a display layer now — it reconciles against `/api/history`
+  // while the History tab is open, and the manual WIN/LOSS buttons still work.
   useEffect(() => {
+    if (activeTab !== 'history') return;
+
     let cancelled = false;
+    const controllers = new Set<AbortController>();
 
-    const checkExpired = async () => {
-      const now = Date.now();
-      const due = historyRef.current.filter(h =>
-        (!h.result || h.result === 'PENDING') &&
-        h.expiryTime && h.expiryTime <= now
-      );
-      if (due.length === 0) return;
+    const pollHistory = async () => {
+      const pending = historyRef.current.filter(h => !h.result || h.result === 'PENDING');
+      if (pending.length === 0) return;
 
-      const entry = due[0];
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-      try {
-        const cleanPair = entry.pair.replace('/', '').toLowerCase();
-        const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
-        if (!response.ok) return;
-        const data: SignalData = await response.json();
-        const currentPrice = data.signal?.recommendations?.['1min']?.entry?.price ?? null;
-        if (currentPrice == null || !entry.entryPrice || cancelled) return;
+      // Only poll pairs that actually have something unresolved.
+      const pairs = Array.from(new Set(pending.map(h => h.pair)));
 
-        const movedUp = currentPrice > entry.entryPrice;
-        const movedDown = currentPrice < entry.entryPrice;
-        let result: 'WIN' | 'LOSS' | undefined;
-        if (entry.direction === 'BUY' && movedUp) result = 'WIN';
-        else if (entry.direction === 'BUY' && movedDown) result = 'LOSS';
-        else if (entry.direction === 'SELL' && movedDown) result = 'WIN';
-        else if (entry.direction === 'SELL' && movedUp) result = 'LOSS';
+      for (const pair of pairs) {
+        if (cancelled) return;
+        const controller = new AbortController();
+        controllers.add(controller);
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        try {
+          const cleanPair = pair.replace(/\//g, '').toLowerCase();
+          const res = await fetch(
+            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair)}&limit=50`,
+            { signal: controller.signal },
+          );
+          if (!res.ok) continue;
 
-        if (result) {
-          setHistory(prev => prev.map(h => h.id === entry.id ? {
-            ...h,
-            result,
-            autoChecked: true,
-            reportStatus: entry.reportable === false ? h.reportStatus : 'syncing',
-            reportError: undefined,
-          } : h));
+          // /api/history returns an OBJECT ({ pair, total, signals: [...] }),
+          // NOT a bare array — extractHistoryRecords handles both defensively.
+          const records = extractHistoryRecords(await res.json());
+          if (records.length === 0 || cancelled) continue;
 
-          if (entry.reportable === false) {
-            console.warn('Skipping auto report for local-only signal without worker id.', {
-              id: entry.id,
-              result,
-              pair: entry.pair,
-            });
-            return;
-          }
-
-          try {
-            await reportSignalResult(entry.id, result);
-            setHistory(prev => prev.map(h => h.id === entry.id ? {
-              ...h,
-              reportStatus: 'synced',
-              reportError: undefined,
-            } : h));
-          } catch (e) {
-            console.warn('Failed to auto-report signal result to worker.', { id: entry.id, result, error: e });
-            setHistory(prev => prev.map(h => h.id === entry.id ? {
-              ...h,
-              reportStatus: 'failed',
-              reportError: 'Auto result saved locally; server sync failed.',
-            } : h));
-          }
+          // reconcileHistory returns the same reference when nothing changed,
+          // so this is a no-op render in the common "still pending" case.
+          setHistory(prev => reconcileHistory(prev, records));
+        } catch {
+          // silent — next cycle retries
+        } finally {
+          clearTimeout(timeoutId);
+          controllers.delete(controller);
         }
-      } catch {
-        // silent — will retry next cycle
-      } finally {
-        clearTimeout(timeoutId);
       }
     };
 
-    const interval = setInterval(checkExpired, 30000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [reportSignalResult]);
+    pollHistory();
+    const interval = setInterval(pollHistory, 45000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      for (const c of controllers) c.abort();
+    };
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -454,7 +494,19 @@ export default function App() {
   const marketClosedData = signalData && (signalData.marketStatus === 'CLOSED' || signalData.signal === null)
     ? signalData
     : null;
-  const tradableSignalData = signalData?.signal && signalData.session
+
+  // BUG #7: backend v6.9.2 forces NO_TRADE while a pair is in cooldown. Show a
+  // dedicated card instead of an unexplained "NO_TRADE".
+  const circuitBreakerData = signalData?.circuitBreaker?.tripped && !marketClosedData
+    ? {
+        pair: signalData.pair,
+        cooldownUntil: signalData.circuitBreaker.cooldownUntil,
+        lossStreak: signalData.circuitBreaker.lossStreak,
+        wouldBeSignal: signalData.circuitBreaker.wouldBeSignal,
+      }
+    : null;
+
+  const tradableSignalData = signalData?.signal && signalData.session && !circuitBreakerData
     ? (signalData as TradableSignalData)
     : null;
 
@@ -516,6 +568,16 @@ export default function App() {
         {/* HOME TAB */}
         {activeTab === 'home' && marketClosedData && (
           <MarketClosedCard data={marketClosedData} onSwitchPair={handleMarketClosedSwitch} />
+        )}
+
+        {activeTab === 'home' && circuitBreakerData && (
+          <CircuitBreakerCard
+            pair={circuitBreakerData.pair}
+            cooldownUntil={circuitBreakerData.cooldownUntil}
+            lossStreak={circuitBreakerData.lossStreak}
+            wouldBeSignal={circuitBreakerData.wouldBeSignal}
+            onSwitchPair={handleMarketClosedSwitch}
+          />
         )}
 
         {activeTab === 'home' && tradableSignalData && (
@@ -795,6 +857,8 @@ export default function App() {
               <p className="text-[#b0b3b8] text-sm">Customize your experience</p>
             </div>
 
+            <HealthPill />
+
             <div className="md-surface overflow-hidden mb-4">
               <SettingRow
                 icon={autoRefresh ? RefreshCw : Zap}
@@ -1018,6 +1082,9 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
   const confidenceNum = parseInt(data.signal.confidence) || 0;
   const best = data.signal.bestTimeframe;
   const entryPrice = data.signal.recommendations?.[best?.timeframe as '5min']?.entry?.price;
+  const coreConfidence = data.signal.coreConfidence;
+  const structureOverall = data.signal.structureVerdict?.overall;
+  const aiBadge = aiStatusBadge(deriveAiStatus(data));
 
   return (
     <div className="md-surface-highest p-0 overflow-hidden scale-in">
@@ -1059,11 +1126,46 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
           </div>
         </div>
 
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
           <div className={cn("px-3 py-1.5 rounded-lg text-sm font-medium", data.signal.grade.grade === 'A' ? "bg-[#81c784]/20 text-[#81c784]" : data.signal.grade.grade === 'B' ? "bg-[#42a5f5]/20 text-[#42a5f5]" : data.signal.grade.grade === 'C' ? "bg-[#ffb74d]/20 text-[#ffb74d]" : "bg-[#ef5350]/20 text-[#ef5350]")}>
             Grade {data.signal.grade.grade} · {data.signal.grade.label}
           </div>
           {best?.timeframe && <div className="px-3 py-1.5 bg-[#323238] rounded-lg text-xs font-medium flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />{best.timeframe}</div>}
+        </div>
+
+        {/* ── B5 instrumentation badges (backend v6.9.2) ── */}
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          {/* Core vs displayed confidence: only worth showing when filters/AI
+              actually moved the number, otherwise it is just noise. */}
+          {typeof coreConfidence === 'number' && Math.abs(coreConfidence - confidenceNum) >= 5 && (
+            <div className="px-2.5 py-1 rounded-lg bg-[#9575cd]/15 text-[#b39ddb] text-[11px] font-medium">
+              Displayed {confidenceNum}% · Core {coreConfidence}%
+            </div>
+          )}
+
+          {structureOverall && structureOverall !== 'N/A' && (
+            <div className={cn(
+              "px-2.5 py-1 rounded-lg text-[11px] font-medium",
+              structureOverall === 'ALIGNED' && "bg-[#81c784]/15 text-[#81c784]",
+              structureOverall === 'AGAINST' && "bg-[#ef5350]/15 text-[#ef5350]",
+              structureOverall === 'MIXED' && "bg-[#ffb74d]/15 text-[#ffb74d]",
+              structureOverall === 'NEUTRAL' && "bg-[#bdbdbd]/15 text-[#bdbdbd]",
+            )}>
+              Structure {structureOverall}
+            </div>
+          )}
+
+          {aiBadge && (
+            <div className={cn("px-2.5 py-1 rounded-lg text-[11px] font-medium", aiBadge.className)}>
+              {aiBadge.label}
+            </div>
+          )}
+
+          {data.entrySource && (
+            <div className="px-2.5 py-1 rounded-lg bg-[#323238] text-[#b0b3b8] text-[11px] font-medium">
+              {ENTRY_SOURCE_LABEL[data.entrySource] || data.entrySource}
+            </div>
+          )}
         </div>
 
         {entryPrice && (
@@ -1304,6 +1406,34 @@ function HistoryRow({ entry, onReport, onDelete, isLast }: { entry: HistoryEntry
                   <span className={cn("text-[9px]", entry.aiAgree ? "text-[#81c784]" : "text-[#ffb74d]")}>
                     {entry.aiAgree ? '· AI ✓' : '· AI ⚠'}
                   </span>
+                )}
+              </div>
+            )}
+
+            {/* ── B5 diagnostics row (backend v6.9.2). Rendered only when the
+                record actually carries them, so pre-upgrade localStorage
+                entries keep displaying exactly as before. ── */}
+            {(entry.structureVerdict || entry.aiStatus || typeof entry.coreConfidence === 'number' || entry.entrySource) && (
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap text-[9px] text-[#6e6e73]">
+                {entry.structureVerdict && entry.structureVerdict !== 'N/A' && (
+                  <span className={cn(
+                    "px-1 rounded",
+                    entry.structureVerdict === 'ALIGNED' && "bg-[#81c784]/15 text-[#81c784]",
+                    entry.structureVerdict === 'AGAINST' && "bg-[#ef5350]/15 text-[#ef5350]",
+                    entry.structureVerdict === 'MIXED' && "bg-[#ffb74d]/15 text-[#ffb74d]",
+                    entry.structureVerdict === 'NEUTRAL' && "bg-[#bdbdbd]/15 text-[#bdbdbd]",
+                  )}>
+                    {entry.structureVerdict}
+                  </span>
+                )}
+                {entry.aiStatus && entry.aiStatus !== 'SKIPPED' && (
+                  <span className="px-1 rounded bg-[#27272d] text-[#b0b3b8]">AI: {entry.aiStatus}</span>
+                )}
+                {typeof entry.coreConfidence === 'number' && (
+                  <span className="px-1 rounded bg-[#9575cd]/15 text-[#b39ddb]">Core {entry.coreConfidence}%</span>
+                )}
+                {entry.entrySource && (
+                  <span className="px-1 rounded bg-[#27272d] text-[#b0b3b8]">Src: {entry.entrySource}</span>
                 )}
               </div>
             )}
