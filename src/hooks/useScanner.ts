@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { SignalData } from '../types';
 import { fireSignalNotification, ensureNotificationPermission } from '../utils/notify';
 import { API_BASE } from '../config';
-import { fetchLatestAll, pickFromLatestAll } from '../utils/signalCache';
 
 export interface ScannerResult {
   pair: string;
@@ -268,41 +267,14 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
     scanningRef.current = true;
     setScanning(true);
     try {
-      // Phase 8 (§A6): one cache read covers every pair the worker already
-      // scans, at zero backend cost. Whatever it does not cover (OTC, exotics,
-      // anything outside SCAN_PAIRS) still goes through the existing /api/batch
-      // path, so scanner behaviour is unchanged for those pairs.
-      let remaining = pairs;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-        let all;
-        try {
-          all = await fetchLatestAll({ apiBase: API_BASE, signal: controller.signal });
-        } finally { clearTimeout(timeoutId); }
-
-        const uncovered: string[] = [];
-        for (const pair of pairs) {
-          const cached = pickFromLatestAll(all, pair);
-          if (cached && cached.signal) applySignalData(pair, cached as unknown as SignalData);
-          else uncovered.push(pair);
-        }
-        remaining = uncovered;
-      } catch {
-        // Cache unavailable — fall back to the original batch scan for everything.
-        remaining = pairs;
-      }
-
-      if (remaining.length > 0) {
-        const chunks = chunkPairs(remaining, BATCH_MAX_PAIRS);
-        await Promise.all(chunks.map(group => fetchBatchGroup(group)));
-      }
+      const chunks = chunkPairs(pairs, BATCH_MAX_PAIRS);
+      await Promise.all(chunks.map(group => fetchBatchGroup(group)));
     } finally {
       scanningRef.current = false;
       setScanning(false);
       setCountdown(intervalMs / 1000);
     }
-  }, [pairs, fetchBatchGroup, applySignalData, intervalMs]);
+  }, [pairs, fetchBatchGroup, intervalMs]);
 
   // Request notification permission once on mount
   useEffect(() => {

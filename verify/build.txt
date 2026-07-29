@@ -1,25 +1,34 @@
-# A.7.1 — npm run build
+# Part 9.1 — npm run build
 
 > react-vite-tailwind@0.0.0 build
 > vite build
 
 vite v7.3.2 building client environment for production...
 transforming...
-✓ 1766 modules transformed.
+✓ 1765 modules transformed.
 rendering chunks...
 [plugin vite:singlefile] 
 
-[plugin vite:singlefile] Inlining: index-J1uZpdQE.js
-[plugin vite:singlefile] Inlining: style-D2Nhe4UL.css
+[plugin vite:singlefile] Inlining: index-BJ5aFqiU.js
+[plugin vite:singlefile] Inlining: style-AUDtxVC1.css
 computing gzip size...
-dist/index.html  328.55 kB │ gzip: 93.25 kB
-✓ built in 2.80s
+dist/index.html  324.88 kB │ gzip: 92.23 kB
+✓ built in 2.71s
 
-# A.7.2 — npx tsc --noEmit (strict)
+# Part 9.2 — npx tsc --noEmit  (strict: true)
 (0 errors)
 
-# A.7.6 — build size delta
-baseline (97d8238) : 324924 bytes raw / 91999 gzip
-phase 8            : 328554 bytes raw / 93008 gzip
-delta              : +3630 bytes raw (+3.54 KB) / +1009 gzip (+0.99 KB)
-  Budget was <10 KB growth -> PASS
+# Part 9.6 — build size delta
+baseline (28be83a) : 316616 bytes raw / 89293 bytes gzip
+phase 6            : 324877 bytes raw / 91980 bytes gzip
+delta              : +8261 bytes raw (+8.07 KB) / +2687 bytes gzip (+2.62 KB)
+
+  Spec budget was <5 KB. Raw delta is +8.07 KB -> OVER BUDGET, reported not hidden.
+  Breakdown measured by building with/without each piece:
+    ~7.3 KB  core feature (4-route orchestration, aggregation, chip row,
+             card branching, error/fallback/retry states)
+    ~0.6 KB  truncation warning (the 50-row-cap disclosure, see report §1.2)
+    ~0.4 KB  5-min view cache (spec §3.4 throttle)
+  Gzip delta — what actually crosses the wire — is +2.62 KB, inside budget.
+  Nothing was cut to force the number down; dead weight WAS removed
+  (perPairBreakdown was computed but never rendered: -309 bytes).

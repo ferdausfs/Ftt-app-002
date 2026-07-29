@@ -1,101 +1,101 @@
-# A.7.5 — smoke tests
-$ node scripts/phase8_smoke.mjs
+# Part 9.5 — smoke tests
+$ node scripts/phase6_smoke.mjs
 
-── routing: normal view reads the cache ───────────────────
-PASS  one request only
-PASS  hits the cache endpoint
-PASS  never touches /api/signal on a hit
-PASS  source tagged cache
-PASS  cached flag preserved
-PASS  generationId preserved
+── filter persistence & parsing ───────────────────────────
+PASS  default filter matches pre-Phase-6 behaviour
+PASS  localStorage key
+PASS  round-trips a saved value
+PASS  accepts an object as well as a string
+PASS  malformed JSON -> default
+PASS  null -> default
+PASS  unknown scope value -> default scope
+PASS  unknown range value -> default range
+PASS  sameFilter true for equal
+PASS  sameFilter false for differing
+PASS  sameFilter false for null
+PASS  cache key is pair-specific for selected scope
+PASS  cache key ignores pair for all scope
 
-── routing: 404 falls back to fresh generation ────────────
-PASS  two requests
-PASS  cache tried first
-PASS  then fresh generation
-PASS  flagged as cache-miss fallback
-PASS  source tagged
-PASS  cached false
+── All Pairs aggregation (spec §3.1 formula) ──────────────
+PASS  total wins summed
+PASS  total losses summed
+PASS  decided denominator = wins + losses
+PASS  aggregate win rate
+PASS  pair count
+PASS  lastUpdated = most recent contributor
+PASS  pairCount counts only contributing pairs
+PASS  missing/null counters treated as 0 and excluded
+PASS  numeric strings coerced
+PASS  empty list -> zero, not NaN
+PASS  zero decided -> WR 0 not NaN
 
-── routing: non-404 errors surface (no silent fallback) ───
-PASS  500 throws rather than masking
-PASS  did not attempt a fresh run
+── date cutoffs (spec §3.3) ───────────────────────────────
+PASS  all time -> 0 (no cutoff)
+PASS  7d cutoff is exactly 168h back
+PASS  today cutoff is local midnight
+PASS  today cutoff is not in the future
+PASS  today cutoff is within the last 24h
+PASS  today is more recent than 7d
 
-── routing: a 200 without a signal is treated as a miss ───
-PASS  fell through to fresh
-PASS  renders a real signal
+── windowed counting from /api/history ────────────────────
+PASS  7d window counts only in-window decided
+PASS  UNKNOWN/pending excluded from decided
+PASS  recordsConsidered counts all in-window rows
+PASS  all-time counts every decided row
+PASS  bare array payload also parses
+PASS  null payload -> zeros, no throw
+PASS  garbage payload -> zeros
+PASS  unparseable timestamp skipped
 
-── Force Refresh always runs the engine ───────────────────
-PASS  single request
-PASS  never reads the cache
-PASS  source tagged fresh
-PASS  cached false
+── 50-row retention cap => lower-bound detection ──────────
+PASS  at-cap pair with recent oldest row is flagged incomplete
+PASS  count is still returned (as a lower bound)
+PASS  below-cap pair is complete
+PASS  at-cap pair whose oldest row predates cutoff is complete
+PASS  aggregate marked incomplete when any pair truncated
+PASS  truncated pairs listed
+PASS  failed pair contributes nothing
+PASS  all-complete aggregate reports complete
+PASS  empty combine -> WR 0 not NaN
 
-── freshness badge (spec §A.5) ────────────────────────────
-PASS  cached label
-PASS  cached detail
-PASS  cached kind
-PASS  live label
-PASS  live kind
-PASS  on-demand kind
-PASS  on-demand explains why
-PASS  on-demand is amber
-PASS  null in -> null out
-PASS  missing age degrades gracefully
+── card subtitles (spec §4.3) ─────────────────────────────
+PASS  selected + all keeps the original wording
+PASS  all + all
+PASS  all + today
+PASS  all + 7d
+PASS  selected + today
+PASS  selected + 7d
 
-── countdown formatting ───────────────────────────────────
-PASS  seconds
-PASS  exact minutes
-PASS  minutes + seconds
-PASS  zero
-PASS  negative clamped
-PASS  non-numeric
-PASS  fresh age reads "just now"
-PASS  older age
+── 5-min view cache (spec §3.4 throttle) ──────────────────
+PASS  first entry hits the network
+PASS  re-entry within TTL is served from cache
+PASS  all-pairs cache is pair-independent
+PASS  a different window is a different key
+PASS  selected scope is pair-specific
+PASS  ...and a different pair refetches
+PASS  entry past TTL refetches
+PASS  manual retry bypasses a fresh cache
+PASS  fan-out avoided on cached re-entry (network calls stayed low)
 
-── auto-refresh timer sync (spec §A.4.1) ──────────────────
-PASS  253s -> 256s delay
-PASS  92s -> 95s delay
-PASS  0s clamps to the 5s floor
-PASS  negative clamps to floor
-PASS  absurd value capped at one cycle
-PASS  undefined -> 60s fallback
-PASS  null -> 60s fallback
-PASS  NaN -> 60s fallback
-PASS  string -> 60s fallback
-
-── scanner cache lookup ───────────────────────────────────
-PASS  exact key hit
-PASS  normalised spelling hit
-PASS  uncovered pair misses
-PASS  empty payload safe
-PASS  null payload safe
-PASS  all-pairs fetch returns the map
-
-── wiring + regressions ───────────────────────────────────
-PASS  App routes normal views through the cache helper
-PASS  App has a force-fresh path
-PASS  Force Refresh button wired
-PASS  freshness pill rendered
-PASS  timer driven by server countdown
-PASS  auto-refresh no longer hardcodes a 60s reset
-PASS  scanner reads the shared cache
-PASS  scanner keeps the batch fallback
-PASS  P5: 25s timeout intact
-PASS  P5: abort-and-supersede intact
-PASS  P5: seq guard intact
-PASS  P5: CB card intact
-PASS  P5: health pill intact
-PASS  P5: history reconciliation intact
-PASS  P5: XAU still absent
-PASS  P5: scanner 20s timeouts intact
-PASS  P6: filter chips intact
-PASS  P6: WR filter state intact
-PASS  P6: coverage warning intact
-PASS  P6: 5-min WR cache intact
-PASS  no deploy commands
-PASS  no new npm dependency
+── wiring assertions ──────────────────────────────────────
+PASS  FilterChipRow imported
+PASS  two chip rows rendered
+PASS  filter state wired
+PASS  effect re-runs on filter change
+PASS  retry bumps the reload key
+PASS  all-pairs failure falls back to selected pair
+PASS  half-failure guard present
+PASS  aggregate type guard used
+PASS  5-min view cache wired
+PASS  only successful views are cached
+PASS  Phase 5 extractHistoryRecords reused
+PASS  Phase 5: 25s signal timeout intact
+PASS  Phase 5: CB card intact
+PASS  Phase 5: health pill intact
+PASS  Phase 5: history reconciliation intact
+PASS  Phase 5: scanner 20s timeouts intact
+PASS  Phase 5: XAU still absent
 
 ───────────────────────────────────────────────────────────
-PASS: 75   FAIL: 0
-ALL PHASE 8 SMOKE TESTS PASSED
+PASS: 79   FAIL: 0
+ALL PHASE 6 SMOKE TESTS PASSED

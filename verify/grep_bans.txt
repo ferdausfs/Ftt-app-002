@@ -1,46 +1,47 @@
-# A.7 — grep verification
+# Part 9 — grep verification
 
-## A.7.3 — both cache path and fresh path present
-$ grep -rn "api/signals/latest\|api/signal?pair" src/
-src/App.tsx:437:  // It called `/api/signal?pair=...` purely to read a current price, which made
-src/hooks/useScanner.ts:200:      const res = await fetch(`${API_BASE}/api/signal?pair=${encodeURIComponent(cleanPair)}`, { signal: controller.signal });
-src/utils/signalMeta.ts:13:// Gold/silver/oil were never implemented worker-side: /api/signal?pair=xauusd
-src/utils/signalCache.ts:8: *   GET /api/signals/latest?pair=X
-src/utils/signalCache.ts:13: *   GET /api/signal?pair=X
-src/utils/signalCache.ts:155:    `${deps.apiBase}/api/signals/latest?pair=${encodeURIComponent(clean)}`,
-src/utils/signalCache.ts:172:    `${deps.apiBase}/api/signal?pair=${encodeURIComponent(clean)}`,
-src/utils/signalCache.ts:188:    `${deps.apiBase}/api/signal?pair=${encodeURIComponent(clean)}`,
-src/utils/signalCache.ts:211:  const res = await f(`${deps.apiBase}/api/signals/latest`, { signal: deps.signal });
+## 9.3 — filter state wired
+$ grep -rn "serverWrFilter" src/ | head -12
+src/App.tsx:174:  const [serverWrFilter, setServerWrFilter] = useState<ServerWrFilter>(() => {
+src/App.tsx:315:    try { localStorage.setItem(SERVER_WR_FILTER_KEY, JSON.stringify(serverWrFilter)); } catch {}
+src/App.tsx:316:  }, [serverWrFilter]);
+src/App.tsx:494:    const budgetMs = serverWrFilter.pairScope === 'all' && serverWrFilter.timeRange !== 'all' ? 20000 : 10000;
+src/App.tsx:497:    const cacheKey = filterCacheKey(serverWrFilter, selectedPair);
+src/App.tsx:509:      filter: serverWrFilter,
+src/App.tsx:514:      stats: prev && sameFilter(prev.filter, serverWrFilter) && prev.pair === selectedPair ? prev.stats : null,
+src/App.tsx:539:      const { pairScope, timeRange } = serverWrFilter;
+src/App.tsx:548:          filter: serverWrFilter,
+src/App.tsx:563:          filter: serverWrFilter,
+src/App.tsx:587:          filter: serverWrFilter,
+src/App.tsx:624:          pair: selectedPair, filter: serverWrFilter, loading: false, stats: null,
 
-## A.7.4 — cache metadata wired
-$ grep -rn "generationAge\|nextRefreshIn\|generationId" src/ | head -12
-src/App.tsx:260:      const serverNext = typeof data.nextRefreshIn === 'number' ? data.nextRefreshIn : null;
-src/App.tsx:352:    // the worker's `nextRefreshIn`; overwriting it with a flat 60s would undo
-src/App.tsx:1488:            {cacheMeta.generationId && (
-src/App.tsx:1489:              <span className="text-[10px] text-[#4a4a4f] font-mono" title={'Generation ' + cacheMeta.generationId}>
-src/App.tsx:1490:                {cacheMeta.generationId.slice(-6)}
-src/utils/signalCache.ts:9: *     200 -> full signal + { cached:true, generatedAt, generationAge,
-src/utils/signalCache.ts:10: *                            nextRefreshIn, generationId, stale:false }
-src/utils/signalCache.ts:16: * `nextRefreshIn` was measured against two real cron boundaries: it counts down
-src/utils/signalCache.ts:17: * to ~0 exactly as a new generationId appears, so it is safe to drive the
-src/utils/signalCache.ts:29:  generationAge?: number;   // seconds since generation
-src/utils/signalCache.ts:30:  nextRefreshIn?: number;   // seconds until the next scheduled scan
-src/utils/signalCache.ts:31:  generationId?: string;
+$ grep -rn "PairScope\|TimeRange" src/utils/serverWr.ts | head -4
+20:export type PairScope = 'all' | 'selected';
+21:export type TimeRange = 'all' | 'today' | '7d';
+24:  pairScope: PairScope;
+25:  timeRange: TimeRange;
 
-## Force Refresh + freshness pill
-783:                onClick={() => fetchSignal(false, true)}
-1425:  const freshness = freshnessBadge(cacheMeta);
+## 9.4 — FilterChipRow used
+$ grep -rn "FilterChipRow" src/
+src/App.tsx:38:import { FilterChipRow } from './components/FilterChipRow';
+src/App.tsx:1040:              <FilterChipRow
+src/App.tsx:1049:              <FilterChipRow
+src/components/FilterChipRow.tsx:17:export function FilterChipRow({ chips, selectedId, onSelect, label, disabled }: Props) {
 
-## Hard bans (§C.1)
-$ grep -rn "vercel --prod|git push" src/ scripts/
-scripts/phase8_smoke.mjs:230:  ok('no deploy commands', !/vercel --prod|git push/.test(app + scanner));
+## Part 8 — hard bans
+$ grep -rn "vercel --prod\|git push\|vercel deploy" src/ scripts/
+(0 hits — nothing deployed, nothing pushed)
+
 $ git diff --stat package.json package-lock.json
-(empty = no new dependency)
+(empty = no new npm dependency)
 
-## Phase 5 + 6 regression guard
-  P5 25s timeout         1 hit(s) OK
-  P5 CB card             3 hit(s) OK
-  P5 health pill         1 hit(s) OK
-  P5 history reconcile   5 hit(s) OK
-  P6 WR chips            4 hit(s) OK
-  P6 WR cache            2 hit(s) OK
+## Phase 5 fixes must survive untouched (Part 8)
+  App 25s signal timeout       1 hit(s)  OK
+  scanner 20s timeout          2 hit(s)  OK
+  CB card                      3 hit(s)  OK
+  health pill                  1 hit(s)  OK
+  history reconciliation       5 hit(s)  OK
+  XAU filter                   4 hit(s)  OK
+
+$ grep -rn "'XAU/USD'" src/    # Phase 5 removal still holds
+(0 hits)
