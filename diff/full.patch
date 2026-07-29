@@ -1,23 +1,22 @@
-diff --git a/scripts/phase5_smoke.mjs b/scripts/phase5_smoke.mjs
+diff --git a/scripts/phase6_smoke.mjs b/scripts/phase6_smoke.mjs
 new file mode 100644
-index 0000000..f4bfac7
+index 0000000..7a22d4c
 --- /dev/null
-+++ b/scripts/phase5_smoke.mjs
-@@ -0,0 +1,201 @@
++++ b/scripts/phase6_smoke.mjs
+@@ -0,0 +1,296 @@
 +/**
-+ * Phase 5 smoke tests — node scripts/phase5_smoke.mjs
++ * Phase 6 smoke tests — node scripts/phase6_smoke.mjs
 + *
-+ * Covers the logic that is easy to get silently wrong and impossible to eyeball:
-+ *   - /api/history reconciliation (payload shape, UNKNOWN handling, no-clobber)
-+ *   - aiStatus derivation for both the dual-AI and OTC pipelines
-+ *   - unsupported-symbol filtering (XAU/XAG/WTI)
-+ *   - the fetchSignal supersede semantics behind BUG #1 (modelled, see below)
++ * Covers the Server Win Rate filter logic:
++ *   - filter persistence / defensive parsing
++ *   - All Pairs aggregation maths
++ *   - date-window cutoffs (local midnight, 168h)
++ *   - /api/history payload shape tolerance (Phase 5 regression guard)
++ *   - the 50-row retention cap that makes windowed counts a lower bound
 + *
-+ * No DOM, no React, no network. The helpers are imported from the real source
-+ * via a tiny esbuild-less TS strip (they are plain functions with types only).
++ * No DOM, no network. Helpers are imported from the real source.
 + */
 +
-+import assert from 'node:assert';
 +import { readFileSync } from 'node:fs';
 +import { fileURLToPath } from 'node:url';
 +import path from 'node:path';
@@ -37,1149 +36,1061 @@ index 0000000..f4bfac7
 +  ok(name, JSON.stringify(a) === JSON.stringify(b),
 +     'expected ' + JSON.stringify(b) + ', got ' + JSON.stringify(a));
 +}
++function close(name, a, b, tol = 1e-9) {
++  ok(name, Math.abs(a - b) <= tol, 'expected ~' + b + ', got ' + a);
++}
 +
-+// ── load the real helpers (transpile TS -> JS in-memory) ───────────────
++// ── load real TS helpers (types erased, imports resolved manually) ─────
++const cache = new Map();
 +function loadModule(relPath) {
++  if (cache.has(relPath)) return cache.get(relPath);
 +  const src = readFileSync(path.join(root, relPath), 'utf8');
 +  const js = ts.transpileModule(src, {
 +    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 +  }).outputText;
 +  const module = { exports: {} };
-+  // the only import is a type-only one, erased by transpile
-+  const fn = new vm.Script(`(function(module, exports, require){${js}\n})`).runInThisContext();
-+  fn(module, module.exports, () => ({}));
++  cache.set(relPath, module.exports);
++  const dir = path.dirname(relPath);
++  const require = (id) => {
++    if (!id.startsWith('.')) return {};
++    const resolved = path.normalize(path.join(dir, id)).replace(/\.js$/, '') + '.ts';
++    return loadModule(resolved);
++  };
++  const fn = new vm.Script(`(function(module,exports,require){${js}\n})`).runInThisContext();
++  fn(module, module.exports, require);
++  cache.set(relPath, module.exports);
 +  return module.exports;
 +}
 +
-+const meta = loadModule('src/utils/signalMeta.ts');
++const wr = loadModule('src/utils/serverWr.ts');
 +
-+console.log('── /api/history payload shape ─────────────────────────────');
++console.log('── filter persistence & parsing ───────────────────────────');
 +{
-+  // The live endpoint returns an object, not an array. This is the bug that
-+  // would have made the spec's polling snippet a silent no-op.
-+  const real = { pair: 'BTC/USD', total: 50, showing: 2, signals: [{ id: 'a', result: 'WIN' }] };
-+  eq('extracts rows from { signals: [...] }', meta.extractHistoryRecords(real).length, 1);
-+  eq('tolerates a bare array too', meta.extractHistoryRecords([{ id: 'a' }]).length, 1);
-+  eq('null payload -> []', meta.extractHistoryRecords(null).length, 0);
-+  eq('garbage payload -> []', meta.extractHistoryRecords({ nope: 1 }).length, 0);
++  eq('default filter matches pre-Phase-6 behaviour',
++     wr.DEFAULT_SERVER_WR_FILTER, { pairScope: 'selected', timeRange: 'all' });
++  eq('localStorage key', wr.SERVER_WR_FILTER_KEY, 'ftt_server_wr_filter');
++
++  eq('round-trips a saved value',
++     wr.parseServerWrFilter('{"pairScope":"all","timeRange":"7d"}'),
++     { pairScope: 'all', timeRange: '7d' });
++  eq('accepts an object as well as a string',
++     wr.parseServerWrFilter({ pairScope: 'all', timeRange: 'today' }),
++     { pairScope: 'all', timeRange: 'today' });
++
++  // a stale or hand-edited value must never crash the History tab
++  eq('malformed JSON -> default', wr.parseServerWrFilter('{nope'), wr.DEFAULT_SERVER_WR_FILTER);
++  eq('null -> default', wr.parseServerWrFilter(null), wr.DEFAULT_SERVER_WR_FILTER);
++  eq('unknown scope value -> default scope',
++     wr.parseServerWrFilter('{"pairScope":"hackers","timeRange":"7d"}'),
++     { pairScope: 'selected', timeRange: '7d' });
++  eq('unknown range value -> default range',
++     wr.parseServerWrFilter('{"pairScope":"all","timeRange":"decade"}'),
++     { pairScope: 'all', timeRange: 'all' });
++
++  ok('sameFilter true for equal', wr.sameFilter({ pairScope: 'all', timeRange: '7d' }, { pairScope: 'all', timeRange: '7d' }));
++  ok('sameFilter false for differing', !wr.sameFilter({ pairScope: 'all', timeRange: '7d' }, { pairScope: 'all', timeRange: 'today' }));
++  ok('sameFilter false for null', !wr.sameFilter(null, { pairScope: 'all', timeRange: '7d' }));
++
++  // cache key must separate per-pair views but not duplicate the all-pairs one
++  ok('cache key is pair-specific for selected scope',
++     wr.filterCacheKey({ pairScope: 'selected', timeRange: 'all' }, 'EUR/USD')
++     !== wr.filterCacheKey({ pairScope: 'selected', timeRange: 'all' }, 'BTC/USD'));
++  eq('cache key ignores pair for all scope',
++     wr.filterCacheKey({ pairScope: 'all', timeRange: '7d' }, 'EUR/USD'),
++     wr.filterCacheKey({ pairScope: 'all', timeRange: '7d' }, 'BTC/USD'));
 +}
 +
-+console.log('\n── reconcileHistory ───────────────────────────────────────');
++console.log('\n── All Pairs aggregation (spec §3.1 formula) ──────────────');
 +{
-+  const local = [
-+    { id: 'a', result: 'PENDING' },
-+    { id: 'b', result: 'PENDING' },
-+    { id: 'c', result: 'WIN' },      // already decided by the user
-+    { id: 'd', result: 'PENDING' },  // worker has no record of it
++  // real shape from the live /api/stats index
++  const pairs = [
++    { pair: 'SOL/USD', wins: 11, losses: 5, totalSignals: 16, lastUpdated: '2026-07-21T01:26:22.248Z' },
++    { pair: 'EUR/USD', wins: 5, losses: 3, totalSignals: 8, lastUpdated: '2026-07-29T02:00:00.000Z' },
++    { pair: 'BTC/USD', wins: 183, losses: 208, totalSignals: 391, lastUpdated: '2026-07-28T05:00:09.946Z' },
 +  ];
-+  const records = [
-+    { id: 'a', result: 'LOSS', structureVerdict: 'MIXED', aiStatus: 'BOTH_AGREE', coreConfidence: 96, entrySource: 'CACHE_PARTIAL' },
-+    { id: 'b', result: 'UNKNOWN' },  // worker gave up
-+    { id: 'c', result: 'LOSS' },     // must NOT overwrite the manual WIN
-+  ];
-+  const out = meta.reconcileHistory(local, records);
++  const agg = wr.aggregateAllPairs(pairs);
++  eq('total wins summed', agg.totalWins, 199);
++  eq('total losses summed', agg.totalLosses, 216);
++  eq('decided denominator = wins + losses', agg.totalSignals, 415);
++  close('aggregate win rate', agg.winRate, 199 / 415);
++  eq('pair count', agg.pairCount, 3);
++  eq('lastUpdated = most recent contributor', agg.lastUpdated, '2026-07-29T02:00:00.000Z');
++  eq('pairCount counts only contributing pairs', agg.pairCount, 3);
 +
-+  eq('WIN/LOSS applied to pending row', out[0].result, 'LOSS');
-+  eq('resolved row marked autoChecked', out[0].autoChecked, true);
-+  eq('resolved row marked synced', out[0].reportStatus, 'synced');
-+  eq('B5 fields backfilled', out[0].coreConfidence, 96);
-+  eq('entrySource backfilled', out[0].entrySource, 'CACHE_PARTIAL');
-+  eq('UNKNOWN leaves row pending', out[1].result, 'PENDING');
-+  eq('manual result never overwritten', out[2].result, 'WIN');
-+  eq('row absent from worker untouched', out[3].result, 'PENDING');
-+
-+  // referential stability => no wasted React render
-+  const noop = meta.reconcileHistory(local, [{ id: 'zzz', result: 'WIN' }]);
-+  ok('same reference when nothing changed', noop === local);
-+  ok('new reference when something changed', out !== local);
-+
-+  // local values win over worker values during backfill
-+  const withLocal = [{ id: 'a', result: 'PENDING', coreConfidence: 11 }];
-+  const merged = meta.reconcileHistory(withLocal, [{ id: 'a', result: 'WIN', coreConfidence: 99 }]);
-+  eq('existing local B5 value not clobbered', merged[0].coreConfidence, 11);
++  // robustness
++  const messy = wr.aggregateAllPairs([
++    { pair: 'A/B' },                                   // no counters at all
++    { pair: 'C/D', wins: null, losses: undefined },    // nulls
++    { pair: 'E/F', wins: '4', losses: '1' },           // strings from JSON
++  ]);
++  eq('missing/null counters treated as 0 and excluded', messy.pairCount, 1);
++  eq('numeric strings coerced', messy.totalWins, 4);
++  eq('empty list -> zero, not NaN', wr.aggregateAllPairs([]).winRate, 0);
++  eq('zero decided -> WR 0 not NaN', wr.aggregateAllPairs([{ pair: 'X/Y', wins: 0, losses: 0 }]).winRate, 0);
 +}
 +
-+console.log('\n── deriveAiStatus ─────────────────────────────────────────');
++console.log('\n── date cutoffs (spec §3.3) ───────────────────────────────');
 +{
-+  const d = (ai) => meta.deriveAiStatus({ signal: { aiValidation: ai } });
-+  eq('dual-AI consensus', d({ combined: { status: 'OK', agreement: 'BOTH_AGREE' } }), 'BOTH_AGREE');
-+  eq('dual-AI split', d({ combined: { status: 'OK', agreement: 'AIs_DISAGREE' } }), 'AIs_DISAGREE');
-+  eq('both offline', d({ combined: { status: 'BOTH_UNAVAILABLE' } }), 'BOTH_UNAVAILABLE');
-+  eq('explicitly skipped', d({ status: 'SKIPPED' }), 'SKIPPED');
-+  eq('OTC agree', d({ status: 'OK', agrees: true }), 'OTC_AGREE');
-+  eq('OTC disagree', d({ status: 'OK', agrees: false }), 'OTC_DISAGREE');
-+  eq('no aiValidation at all', d(undefined), undefined);
-+  eq('missing signal object', meta.deriveAiStatus({}), undefined);
++  const now = new Date('2026-07-29T14:30:00Z').getTime();
++  eq('all time -> 0 (no cutoff)', wr.windowCutoff('all', now), 0);
++
++  const sevenD = wr.windowCutoff('7d', now);
++  eq('7d cutoff is exactly 168h back', now - sevenD, 7 * 24 * 60 * 60 * 1000);
++
++  const today = wr.windowCutoff('today', now);
++  const d = new Date(today);
++  ok('today cutoff is local midnight',
++     d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0 && d.getMilliseconds() === 0,
++     d.toString());
++  ok('today cutoff is not in the future', today <= now);
++  ok('today cutoff is within the last 24h', now - today < 24 * 60 * 60 * 1000);
++  ok('today is more recent than 7d', today > sevenD);
 +}
 +
-+console.log('\n── aiStatusBadge ──────────────────────────────────────────');
++console.log('\n── windowed counting from /api/history ────────────────────');
 +{
-+  ok('BOTH_AGREE -> green consensus', meta.aiStatusBadge('BOTH_AGREE').label.includes('Consensus'));
-+  ok('AIs_DISAGREE -> split', meta.aiStatusBadge('AIs_DISAGREE').label.includes('Split'));
-+  ok('BOTH_UNAVAILABLE -> offline', meta.aiStatusBadge('BOTH_UNAVAILABLE').label.includes('Offline'));
-+  eq('SKIPPED hidden', meta.aiStatusBadge('SKIPPED'), null);
-+  eq('undefined hidden', meta.aiStatusBadge(undefined), null);
++  const now = Date.now();
++  const hoursAgo = h => new Date(now - h * 3600 * 1000).toISOString();
++  const payload = {
++    pair: 'BTC/USD', total: 6, showing: 6,
++    signals: [
++      { id: '1', timestamp: hoursAgo(1), result: 'WIN' },
++      { id: '2', timestamp: hoursAgo(2), result: 'LOSS' },
++      { id: '3', timestamp: hoursAgo(3), result: 'UNKNOWN' },   // must not count
++      { id: '4', timestamp: hoursAgo(4), result: null },        // pending, must not count
++      { id: '5', timestamp: hoursAgo(200), result: 'WIN' },     // outside 7d
++      { id: '6', timestamp: hoursAgo(300), result: 'LOSS' },    // outside 7d
++    ],
++  };
++
++  const c7 = wr.countWindowed(payload, wr.windowCutoff('7d', now));
++  eq('7d window counts only in-window decided', { w: c7.wins, l: c7.losses }, { w: 1, l: 1 });
++  eq('UNKNOWN/pending excluded from decided', c7.decided, 2);
++  eq('recordsConsidered counts all in-window rows', c7.recordsConsidered, 4);
++
++  const cAll = wr.countWindowed(payload, 0);
++  eq('all-time counts every decided row', cAll.decided, 4);
++
++  // Phase 5 regression: the endpoint returns an object, not a bare array
++  const bare = wr.countWindowed(payload.signals, 0);
++  eq('bare array payload also parses', bare.decided, 4);
++  eq('null payload -> zeros, no throw', wr.countWindowed(null, 0).decided, 0);
++  eq('garbage payload -> zeros', wr.countWindowed({ oops: true }, 0).decided, 0);
++  eq('unparseable timestamp skipped',
++     wr.countWindowed({ signals: [{ id: 'x', timestamp: 'not-a-date', result: 'WIN' }] }, 0).decided, 0);
 +}
 +
-+console.log('\n── unsupported symbols (BUG #5) ───────────────────────────');
++console.log('\n── 50-row retention cap => lower-bound detection ──────────');
 +{
-+  ok('XAU/USD rejected', !meta.isSupportedPair('XAU/USD'));
-+  ok('XAG/USD rejected', !meta.isSupportedPair('XAG/USD'));
-+  ok('WTI/USD rejected', !meta.isSupportedPair('WTI/USD'));
-+  ok('lowercase xauusd rejected', !meta.isSupportedPair('xauusd'));
-+  ok('EUR/USD kept', meta.isSupportedPair('EUR/USD'));
-+  ok('BTC/USD kept', meta.isSupportedPair('BTC/USD'));
-+  ok('EURUSD-OTC kept', meta.isSupportedPair('EURUSD-OTC'));
-+  ok('non-string rejected', !meta.isSupportedPair(null));
-+  const saved = ['EUR/USD', 'XAU/USD', 'BTC/USD'];
-+  eq('stale favourite filtered on load', saved.filter(meta.isSupportedPair), ['EUR/USD', 'BTC/USD']);
++  const now = Date.now();
++  const hoursAgo = h => new Date(now - h * 3600 * 1000).toISOString();
++
++  // A busy pair at the cap whose oldest retained row is only 24h old cannot
++  // answer "last 7 days" — older rows have been evicted server-side.
++  const capped = { signals: Array.from({ length: 50 }, (_, i) => ({
++    id: 'c' + i, timestamp: hoursAgo(i * 0.5), result: i % 2 ? 'WIN' : 'LOSS',
++  })) };
++  const c7 = wr.countWindowed(capped, wr.windowCutoff('7d', now));
++  ok('at-cap pair with recent oldest row is flagged incomplete', !c7.complete);
++  ok('count is still returned (as a lower bound)', c7.decided === 50);
++
++  // A quiet pair below the cap is authoritative
++  const small = { signals: [
++    { id: 'a', timestamp: hoursAgo(1), result: 'WIN' },
++    { id: 'b', timestamp: hoursAgo(300), result: 'LOSS' },
++  ] };
++  ok('below-cap pair is complete', wr.countWindowed(small, wr.windowCutoff('7d', now)).complete);
++
++  // At the cap but the oldest row predates the cutoff => window fully covered
++  const cappedOld = { signals: Array.from({ length: 50 }, (_, i) => ({
++    id: 'o' + i, timestamp: hoursAgo(i * 20), result: 'WIN',
++  })) };
++  ok('at-cap pair whose oldest row predates cutoff is complete',
++     wr.countWindowed(cappedOld, wr.windowCutoff('today', now)).complete);
++
++  // combine: any truncated pair taints the aggregate
++  const combined = wr.combineWindowed([
++    { pair: 'BTC/USD', count: c7 },
++    { pair: 'SOL/USD', count: wr.countWindowed(small, wr.windowCutoff('7d', now)) },
++    { pair: 'DEAD/USD', count: null },   // fetch failed
++  ]);
++  ok('aggregate marked incomplete when any pair truncated', !combined.coverage.complete);
++  eq('truncated pairs listed', combined.coverage.truncatedPairs, ['BTC/USD']);
++  eq('failed pair contributes nothing', combined.totalWins + combined.totalLosses, c7.decided + 1);
++  eq('all-complete aggregate reports complete',
++     wr.combineWindowed([{ pair: 'X/Y', count: wr.countWindowed(small, 0) }]).coverage.complete, true);
++  eq('empty combine -> WR 0 not NaN', wr.combineWindowed([]).winRate, 0);
 +}
 +
-+console.log('\n── entry source labels ────────────────────────────────────');
++console.log('\n── card subtitles (spec §4.3) ─────────────────────────────');
 +{
-+  eq('FRESH_API label', meta.ENTRY_SOURCE_LABEL['FRESH_API'], 'Fresh data');
-+  eq('CACHE_PARTIAL label', meta.ENTRY_SOURCE_LABEL['CACHE_PARTIAL'], 'Partly cached');
-+  eq('CACHE_ALL label', meta.ENTRY_SOURCE_LABEL['CACHE_ALL'], 'Cached data');
++  const f = (pairScope, timeRange) => wr.filterSubtitle({ pairScope, timeRange }, 'EUR/USD');
++  eq('selected + all keeps the original wording', f('selected', 'all'), 'All users · EUR/USD');
++  eq('all + all', f('all', 'all'), 'All pairs · All time');
++  eq('all + today', f('all', 'today'), 'All pairs · Today');
++  eq('all + 7d', f('all', '7d'), 'All pairs · Last 7 days');
++  eq('selected + today', f('selected', 'today'), 'EUR/USD · Today');
++  eq('selected + 7d', f('selected', '7d'), 'EUR/USD · Last 7 days');
 +}
 +
-+// ── BUG #1 semantics, modelled ─────────────────────────────────────────
-+// Mirrors the guard structure now in fetchSignal: abort-and-supersede instead
-+// of early-return, with a monotonic sequence deciding who may write state.
-+console.log('\n── fetchSignal supersede model (BUG #1/#2) ────────────────');
++console.log('\n── 5-min view cache (spec §3.4 throttle) ──────────────────');
 +{
-+  function makeFetcher() {
-+    const state = { inFlight: false, seq: 0, aborted: 0, writes: [], loading: false, error: null };
-+    const start = (label, { failWith } = {}) => {
-+      if (state.inFlight) state.aborted++;          // abort the older request
-+      state.inFlight = true;
-+      const mySeq = ++state.seq;
-+      state.loading = true;
-+      return {
-+        settle() {
-+          if (mySeq !== state.seq) return;          // superseded: write nothing
-+          if (failWith) state.error = failWith;
-+          else state.writes.push(label);
-+          state.inFlight = false;
-+          state.loading = false;
-+        },
-+      };
-+    };
-+    return { state, start };
-+  }
++  // Model the cache the effect uses: key -> {at, state}, TTL 5 min, and a
++  // manual retry that must bypass a fresh entry.
++  const TTL = 5 * 60 * 1000;
++  const cache = new Map();
++  let fetches = 0;
++  let lastReload = 0;
 +
-+  // old behaviour: second tap during an in-flight fetch was dropped entirely
-+  const f = makeFetcher();
-+  const autoRefresh = f.start('auto');
-+  const userRetry = f.start('retry');       // user taps Retry mid-flight
-+  eq('older request is aborted, not ignored', f.state.aborted, 1);
-+  autoRefresh.settle();                      // late arrival must be discarded
-+  eq('superseded response writes nothing', f.state.writes, []);
-+  userRetry.settle();
-+  eq('newest response wins', f.state.writes, ['retry']);
-+  eq('spinner released exactly once', f.state.loading, false);
++  const enter = (filter, pair, now, reloadKey = 0) => {
++    const key = wr.filterCacheKey(filter, pair);
++    const hit = cache.get(key);
++    const fresh = hit && now - hit.at < TTL;
++    if (fresh && reloadKey === lastReload) return { served: 'cache', value: hit.state };
++    lastReload = reloadKey;
++    fetches++;
++    const state = { pair, filter, stats: { totalSignals: fetches } };
++    cache.set(key, { at: now, state });
++    return { served: 'network', value: state };
++  };
 +
-+  // an aborted older request must not surface a timeout error to the user
-+  const g = makeFetcher();
-+  const slow = g.start('slow', { failWith: 'Request timed out. Tap retry.' });
-+  const fresh = g.start('fresh');
-+  slow.settle();
-+  eq('aborted older request shows no error', g.state.error, null);
-+  fresh.settle();
-+  eq('fresh request still renders', g.state.writes, ['fresh']);
++  const t0 = 1_000_000;
++  const all7d = { pairScope: 'all', timeRange: '7d' };
++  eq('first entry hits the network', enter(all7d, 'EUR/USD', t0).served, 'network');
++  eq('re-entry within TTL is served from cache', enter(all7d, 'EUR/USD', t0 + 60_000).served, 'cache');
++  eq('all-pairs cache is pair-independent', enter(all7d, 'BTC/USD', t0 + 61_000).served, 'cache');
++  eq('a different window is a different key', enter({ pairScope: 'all', timeRange: 'today' }, 'EUR/USD', t0 + 62_000).served, 'network');
++  eq('selected scope is pair-specific',
++     enter({ pairScope: 'selected', timeRange: 'all' }, 'EUR/USD', t0).served, 'network');
++  eq('...and a different pair refetches',
++     enter({ pairScope: 'selected', timeRange: 'all' }, 'BTC/USD', t0 + 1000).served, 'network');
++  eq('entry past TTL refetches', enter(all7d, 'EUR/USD', t0 + TTL + 1).served, 'network');
++  eq('manual retry bypasses a fresh cache',
++     enter(all7d, 'EUR/USD', t0 + TTL + 2, 1).served, 'network');
++  ok('fan-out avoided on cached re-entry (network calls stayed low)', fetches === 6, 'fetches=' + fetches);
 +}
 +
-+console.log('\n── timeout budget ─────────────────────────────────────────');
++console.log('\n── wiring assertions ──────────────────────────────────────');
 +{
 +  const app = readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
++  ok('FilterChipRow imported', app.includes("import { FilterChipRow }"));
++  ok('two chip rows rendered', (app.match(/<FilterChipRow/g) || []).length === 2);
++  ok('filter state wired', app.includes('serverWrFilter') && app.includes('setServerWrFilter'));
++  ok('effect re-runs on filter change', app.includes('[activeTab, selectedPair, serverWrFilter, serverWrReloadKey]'));
++  ok('retry bumps the reload key', app.includes('setServerWrReloadKey(k => k + 1)'));
++  ok('all-pairs failure falls back to selected pair', app.includes('All Pairs view unavailable'));
++  ok('half-failure guard present', app.includes('Math.ceil(pairs.length / 2)'));
++  ok('aggregate type guard used', app.includes('isAggregateStats'));
++  ok('5-min view cache wired', app.includes('SERVER_WR_CACHE_TTL_MS') && app.includes('serverWrCacheRef'));
++  ok('only successful views are cached', app.includes('if (next.stats) serverWrCacheRef.current.set'));
++  ok('Phase 5 extractHistoryRecords reused', readFileSync(path.join(root, 'src/utils/serverWr.ts'), 'utf8')
++     .includes("from './signalMeta'"));
++
++  // Phase 5 fixes must survive untouched (spec §8)
++  ok('Phase 5: 25s signal timeout intact', app.includes('controller.abort(), 25000'));
++  ok('Phase 5: CB card intact', app.includes('CircuitBreakerCard'));
++  ok('Phase 5: health pill intact', app.includes('<HealthPill />'));
++  ok('Phase 5: history reconciliation intact', app.includes('reconcileHistory'));
 +  const scanner = readFileSync(path.join(root, 'src/hooks/useScanner.ts'), 'utf8');
-+  ok('App fetchSignal timeout is 25s', app.includes('controller.abort(), 25000'));
-+  ok('no 15s timeout left in App', !app.includes('controller.abort(), 15000'));
-+  ok('scanner timeouts raised to 20s', (scanner.match(/controller\.abort\(\), 20000/g) || []).length === 2);
-+  ok('no 12s timeout left in scanner', !scanner.includes('controller.abort(), 12000'));
-+  ok('client auto-checker removed', !app.includes('const entry = due[0]'));
-+  ok('history poll present', app.includes('/api/history?pair='));
-+  ok('manual report flow retained', app.includes('reportSignalResult'));
++  ok('Phase 5: scanner 20s timeouts intact', (scanner.match(/controller\.abort\(\), 20000/g) || []).length === 2);
++  ok('Phase 5: XAU still absent', !/'XAU\/USD'/.test(app + scanner));
 +}
 +
 +console.log('\n───────────────────────────────────────────────────────────');
 +console.log('PASS: ' + pass + '   FAIL: ' + fail);
 +if (fail > 0) { console.log('\nFailures:'); failures.forEach(f => console.log('  - ' + f)); process.exit(1); }
-+console.log('ALL PHASE 5 SMOKE TESTS PASSED');
++console.log('ALL PHASE 6 SMOKE TESTS PASSED');
 diff --git a/src/App.tsx b/src/App.tsx
-index 43c4dba..f7e37ef 100644
+index f7e37ef..20893da 100644
 --- a/src/App.tsx
 +++ b/src/App.tsx
-@@ -28,7 +28,13 @@ import { SignalData, TimeframeRec } from './types';
- import { cn } from './utils/cn';
- import { PairSelector } from './components/PairSelector';
- import { ScannerView } from './components/ScannerView';
-+import { CircuitBreakerCard } from './components/CircuitBreakerCard';
-+import { HealthPill } from './components/HealthPill';
- import { API_BASE } from './config';
+@@ -35,6 +35,13 @@ import {
+   deriveAiStatus, aiStatusBadge, isSupportedPair, ENTRY_SOURCE_LABEL,
+   extractHistoryRecords, reconcileHistory,
+ } from './utils/signalMeta';
++import { FilterChipRow } from './components/FilterChipRow';
 +import {
-+  deriveAiStatus, aiStatusBadge, isSupportedPair, ENTRY_SOURCE_LABEL,
-+  extractHistoryRecords, reconcileHistory,
-+} from './utils/signalMeta';
++  ServerWrFilter, DEFAULT_SERVER_WR_FILTER, SERVER_WR_FILTER_KEY,
++  parseServerWrFilter, sameFilter, windowCutoff, filterSubtitle, filterCacheKey,
++  aggregateAllPairs, countWindowed, combineWindowed, TIME_RANGE_LABEL,
++  PairScope, TimeRange, StatsPairRow, CoverageSummary,
++} from './utils/serverWr';
  
  interface HistoryEntry {
    id: string;
-@@ -49,6 +55,12 @@ interface HistoryEntry {
-   expiryTime?: number; // ms epoch when this trade expires
-   aiAgree?: boolean;
-   autoChecked?: boolean; // true if result was set by auto win/loss check
-+  // ── B5 diagnostics (backend v6.9.2). All optional: entries written by an
-+  // older build stay valid, the row just renders without these badges. ──
-+  structureVerdict?: string;  // 'ALIGNED' | 'MIXED' | 'AGAINST' | 'NEUTRAL' | 'N/A'
-+  aiStatus?: string;          // 'BOTH_AGREE' | 'AIs_DISAGREE' | 'BOTH_UNAVAILABLE' | ...
-+  coreConfidence?: number;    // engine confidence before filters/AI adjustment
-+  entrySource?: string;       // 'FRESH_API' | 'CACHE_PARTIAL' | 'CACHE_ALL'
-   reportable?: boolean; // false when no worker signal ID exists (local-only fallback)
-   reportStatus?: 'syncing' | 'synced' | 'failed';
-   reportError?: string;
-@@ -79,6 +91,8 @@ interface ServerStatsState {
+@@ -82,17 +89,44 @@ interface ServerPairStats {
+   dynamicConfidenceAdjustment?: number;
+ }
+ 
++/** Aggregate (All Pairs) or windowed (Today / 7d) result — not a single-pair payload. */
++interface ServerAggregateStats {
++  isAggregate: true;
++  scope: PairScope;
++  window: TimeRange;
++  totalWins: number;
++  totalLosses: number;
++  totalSignals: number;          // decided count (wins + losses)
++  winRate: number;               // 0..1
++  pairCount?: number;
++  recordsConsidered?: number;    // history rows inside the window
++  coverage?: CoverageSummary;    // 50-row cap may hide older rows
++  lastUpdated?: string;
++}
++
++function isAggregateStats(s: ServerPairStats | ServerAggregateStats | null): s is ServerAggregateStats {
++  return !!s && (s as ServerAggregateStats).isAggregate === true;
++}
++
+ interface ServerStatsState {
+   pair: string;
++  filter: ServerWrFilter;
+   loading: boolean;
+-  stats: ServerPairStats | null;
++  stats: ServerPairStats | ServerAggregateStats | null;
+   message?: string;
++  /** set when the All Pairs view failed and we fell back to the selected pair */
++  fallbackNote?: string;
++  /** true when the user can retry (e.g. most parallel fetches failed) */
++  retryable?: boolean;
+ }
  
  type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner';
  
-+const DEFAULT_FAVORITES = ['EUR/USD', 'GBP/USD', 'BTC/USD'];
+ const DEFAULT_FAVORITES = ['EUR/USD', 'GBP/USD', 'BTC/USD'];
+ 
++/** Spec §3.4: memoise a computed Server-WR view for this long. */
++const SERVER_WR_CACHE_TTL_MS = 5 * 60 * 1000;
 +
  export default function App() {
    const [selectedPair, setSelectedPair] = useState(() => {
      try { return localStorage.getItem('ftt_selected_pair') || 'EUR/USD'; } catch { return 'EUR/USD'; }
-@@ -91,8 +105,13 @@ export default function App() {
-   const [favorites, setFavorites] = useState<string[]>(() => {
-     try {
-       const saved = localStorage.getItem('ftt_favorites');
--      return saved ? JSON.parse(saved) : ['EUR/USD', 'GBP/USD', 'XAU/USD'];
--    } catch { return ['EUR/USD', 'GBP/USD', 'XAU/USD']; }
-+      // XAU/USD dropped — backend rejects gold ("Invalid pair"). BTC/USD instead.
-+      const parsed: string[] = saved ? JSON.parse(saved) : DEFAULT_FAVORITES;
-+      // Strip unsupported symbols that may still be sitting in localStorage
-+      // from a previous install, otherwise the old favourite keeps 404-ing.
-+      const cleaned = Array.isArray(parsed) ? parsed.filter(isSupportedPair) : DEFAULT_FAVORITES;
-+      return cleaned.length > 0 ? cleaned : DEFAULT_FAVORITES;
-+    } catch { return DEFAULT_FAVORITES; }
-   });
+@@ -137,6 +171,19 @@ export default function App() {
+   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+   const [refreshCountdown, setRefreshCountdown] = useState(60);
+   const [serverStatsState, setServerStatsState] = useState<ServerStatsState | null>(null);
++  const [serverWrFilter, setServerWrFilter] = useState<ServerWrFilter>(() => {
++    try {
++      const saved = localStorage.getItem(SERVER_WR_FILTER_KEY);
++      return saved ? parseServerWrFilter(saved) : { ...DEFAULT_SERVER_WR_FILTER };
++    } catch { return { ...DEFAULT_SERVER_WR_FILTER }; }
++  });
++  // Manual retry: bumping this re-runs the server-stats effect.
++  const [serverWrReloadKey, setServerWrReloadKey] = useState(0);
++  // Spec §3.4 throttle: memoise each computed view for 5 min so re-entering the
++  // History tab does not repeat the ~13-request fan-out. Keyed by
++  // (scope, pair, window); a manual retry bypasses it.
++  const serverWrCacheRef = useRef<Map<string, { at: number; state: ServerStatsState }>>(new Map());
++  const lastServerWrReloadRef = useRef(0);
  
-   const toggleFavorite = (pair: string) => {
-@@ -124,18 +143,28 @@ export default function App() {
- 
-   const fetchAbortRef = useRef<AbortController | null>(null);
-   const fetchInFlightRef = useRef(false);
-+  // Monotonic id: only the newest request is allowed to write state. Guards
-+  // against a slow earlier response landing after a newer one (last-write-wins
-+  // would otherwise show stale data).
-+  const fetchSeqRef = useRef(0);
- 
-   const fetchSignal = useCallback(async (silent = false) => {
--    // Prevent overlapping requests (a previous slow/hung request could
--    // otherwise keep `loading=true` forever and block the UI)
--    if (fetchInFlightRef.current) return;
-+    // BUG #1 fix: previously this early-returned whenever a fetch was in
-+    // flight, so tapping Retry during a slow request did *nothing* — no
-+    // spinner, no error, no request. The user read that as "button dead".
-+    // Now the in-flight request is aborted and superseded by this one.
-+    if (fetchInFlightRef.current && fetchAbortRef.current) {
-+      fetchAbortRef.current.abort();
-+    }
-     fetchInFlightRef.current = true;
- 
--    // Abort any previous in-flight request just in case
--    fetchAbortRef.current?.abort();
-+    const mySeq = ++fetchSeqRef.current;
-     const controller = new AbortController();
-     fetchAbortRef.current = controller;
--    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s hard timeout
-+    // BUG #2 fix: 15s was too tight. Backend worst case = candles (~2-4s) +
-+    // Cerebras + Groq (~3-5s) + engine (~1s), plus Cloudflare cold start and a
-+    // slow mobile network. 25s covers the p90 without hanging the UI forever.
-+    const timeoutId = setTimeout(() => controller.abort(), 25000);
- 
-     if (!silent) setLoading(true);
-     setError(null);
-@@ -151,8 +180,15 @@ export default function App() {
-         throw new Error('Invalid response');
-       }
- 
--      // If the user switched pairs while this request was in flight, drop it
--      if (requestedPair !== selectedPair) return;
-+      // BUG #3: the user switched pairs (or a newer fetch started) while this
-+      // request was in flight — dropping is semantically right, but log it so
-+      // the "stuck loading" reports are diagnosable from the console.
-+      if (requestedPair !== selectedPair || mySeq !== fetchSeqRef.current) {
-+        console.warn('fetchSignal: superseded, dropping result', {
-+          requestedPair, currentPair: selectedPair, mySeq, latestSeq: fetchSeqRef.current,
-+        });
-+        return;
-+      }
- 
-       setSignalData(data);
-       setLastUpdated(new Date());
-@@ -191,6 +227,12 @@ export default function App() {
-           expiryMinutes,
-           expiryTime: expiryMinutes ? Date.now() + expiryMinutes * 60000 : undefined,
-           aiAgree: data.signal.aiValidation?.agrees,
-+          // B5 fields — structureVerdict/coreConfidence come off the signal,
-+          // entrySource is a top-level response field (verified live).
-+          structureVerdict: data.signal.structureVerdict?.overall,
-+          aiStatus: deriveAiStatus(data),
-+          coreConfidence: data.signal.coreConfidence,
-+          entrySource: data.entrySource,
-           reportable: Boolean(workerSignalId),
-         };
-         setHistory(prev => {
-@@ -199,6 +241,9 @@ export default function App() {
-         });
-       }
-     } catch (e: any) {
-+      // A superseded request always aborts; that is not a user-visible error.
-+      // Only surface a failure if this is still the request the user waits on.
-+      if (mySeq !== fetchSeqRef.current) return;
-       if (e?.name === 'AbortError') {
-         setError('Request timed out. Tap retry.');
-       } else {
-@@ -206,8 +251,12 @@ export default function App() {
-       }
-     } finally {
-       clearTimeout(timeoutId);
--      fetchInFlightRef.current = false;
--      setLoading(false);
-+      // Only the newest request clears the shared in-flight/loading state —
-+      // an aborted older one must not unlock the spinner for a live request.
-+      if (mySeq === fetchSeqRef.current) {
-+        fetchInFlightRef.current = false;
-+        setLoading(false);
-+      }
-     }
-   }, [selectedPair]);
- 
-@@ -215,7 +264,15 @@ export default function App() {
+   const historyRef = useRef<HistoryEntry[]>(history);
+   historyRef.current = history;
+@@ -264,6 +311,10 @@ export default function App() {
      try { localStorage.setItem('ftt_history', JSON.stringify(history)); } catch {}
    }, [history]);
  
--  useEffect(() => { fetchSignal(); try { localStorage.setItem('ftt_selected_pair', selectedPair); } catch {} }, [selectedPair]);
-+  // BUG #6 fix: clear the previous pair's signal before fetching the new one.
-+  // Without this the old pair's card stayed on screen for the whole 5-8s fetch,
-+  // so the user briefly read BTC numbers under an EUR/USD heading.
 +  useEffect(() => {
-+    setSignalData(null);
-+    setError(null);
-+    fetchSignal();
-+    try { localStorage.setItem('ftt_selected_pair', selectedPair); } catch {}
-+  }, [selectedPair]);
- 
-   // Auto-refresh: timestamp-based (not tick-counter-based) so it's resilient
-   // to the tab/screen being backgrounded for a long time. When the page
-@@ -303,85 +360,68 @@ export default function App() {
-     }
-   };
- 
--  // Auto WIN/LOSS checker: every 30s, check PENDING entries whose expiry has
--  // passed, fetch current price for that pair, and compare vs entry price.
--  // Uses a ref for `history` so the interval is created ONCE, not re-created
--  // every time history changes (which previously caused timer churn).
--
-+  // BUG #4 fix — the client-side auto WIN/LOSS checker is gone.
-+  //
-+  // It called `/api/signal?pair=...` purely to read a current price, which made
-+  // the worker run a full signal generation (candles + Cerebras + Groq + engine)
-+  // and burn TwelveData quota for every check. It also processed only `due[0]`
-+  // per 30s tick, so five expired signals took 150s to resolve.
-+  //
-+  // Backend v6.9.2 now resolves results authoritatively: cron `*/2 * * * *`
-+  // plus the B0-3 retry ladder (15 attempts before giving up as UNKNOWN).
-+  // The app is a display layer now — it reconciles against `/api/history`
-+  // while the History tab is open, and the manual WIN/LOSS buttons still work.
-   useEffect(() => {
-+    if (activeTab !== 'history') return;
++    try { localStorage.setItem(SERVER_WR_FILTER_KEY, JSON.stringify(serverWrFilter)); } catch {}
++  }, [serverWrFilter]);
 +
-     let cancelled = false;
-+    const controllers = new Set<AbortController>();
- 
--    const checkExpired = async () => {
--      const now = Date.now();
--      const due = historyRef.current.filter(h =>
--        (!h.result || h.result === 'PENDING') &&
--        h.expiryTime && h.expiryTime <= now
--      );
--      if (due.length === 0) return;
--
--      const entry = due[0];
--      const controller = new AbortController();
--      const timeoutId = setTimeout(() => controller.abort(), 10000);
--      try {
--        const cleanPair = entry.pair.replace('/', '').toLowerCase();
--        const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
--        if (!response.ok) return;
--        const data: SignalData = await response.json();
--        const currentPrice = data.signal?.recommendations?.['1min']?.entry?.price ?? null;
--        if (currentPrice == null || !entry.entryPrice || cancelled) return;
--
--        const movedUp = currentPrice > entry.entryPrice;
--        const movedDown = currentPrice < entry.entryPrice;
--        let result: 'WIN' | 'LOSS' | undefined;
--        if (entry.direction === 'BUY' && movedUp) result = 'WIN';
--        else if (entry.direction === 'BUY' && movedDown) result = 'LOSS';
--        else if (entry.direction === 'SELL' && movedDown) result = 'WIN';
--        else if (entry.direction === 'SELL' && movedUp) result = 'LOSS';
--
--        if (result) {
--          setHistory(prev => prev.map(h => h.id === entry.id ? {
--            ...h,
--            result,
--            autoChecked: true,
--            reportStatus: entry.reportable === false ? h.reportStatus : 'syncing',
--            reportError: undefined,
--          } : h));
--
--          if (entry.reportable === false) {
--            console.warn('Skipping auto report for local-only signal without worker id.', {
--              id: entry.id,
--              result,
--              pair: entry.pair,
--            });
--            return;
--          }
--
--          try {
--            await reportSignalResult(entry.id, result);
--            setHistory(prev => prev.map(h => h.id === entry.id ? {
--              ...h,
--              reportStatus: 'synced',
--              reportError: undefined,
--            } : h));
--          } catch (e) {
--            console.warn('Failed to auto-report signal result to worker.', { id: entry.id, result, error: e });
--            setHistory(prev => prev.map(h => h.id === entry.id ? {
--              ...h,
--              reportStatus: 'failed',
--              reportError: 'Auto result saved locally; server sync failed.',
--            } : h));
--          }
-+    const pollHistory = async () => {
-+      const pending = historyRef.current.filter(h => !h.result || h.result === 'PENDING');
-+      if (pending.length === 0) return;
-+
-+      // Only poll pairs that actually have something unresolved.
-+      const pairs = Array.from(new Set(pending.map(h => h.pair)));
-+
-+      for (const pair of pairs) {
-+        if (cancelled) return;
-+        const controller = new AbortController();
-+        controllers.add(controller);
-+        const timeoutId = setTimeout(() => controller.abort(), 10000);
-+        try {
-+          const cleanPair = pair.replace(/\//g, '').toLowerCase();
-+          const res = await fetch(
-+            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair)}&limit=50`,
-+            { signal: controller.signal },
-+          );
-+          if (!res.ok) continue;
-+
-+          // /api/history returns an OBJECT ({ pair, total, signals: [...] }),
-+          // NOT a bare array — extractHistoryRecords handles both defensively.
-+          const records = extractHistoryRecords(await res.json());
-+          if (records.length === 0 || cancelled) continue;
-+
-+          // reconcileHistory returns the same reference when nothing changed,
-+          // so this is a no-op render in the common "still pending" case.
-+          setHistory(prev => reconcileHistory(prev, records));
-+        } catch {
-+          // silent — next cycle retries
-+        } finally {
-+          clearTimeout(timeoutId);
-+          controllers.delete(controller);
-         }
--      } catch {
--        // silent — will retry next cycle
--      } finally {
--        clearTimeout(timeoutId);
-       }
+   // BUG #6 fix: clear the previous pair's signal before fetching the new one.
+   // Without this the old pair's card stayed on screen for the whole 5-8s fetch,
+   // so the user briefly read BTC numbers under an EUR/USD heading.
+@@ -423,51 +474,215 @@ export default function App() {
      };
+   }, [activeTab]);
  
--    const interval = setInterval(checkExpired, 30000);
--    return () => { cancelled = true; clearInterval(interval); };
--  }, [reportSignalResult]);
-+    pollHistory();
-+    const interval = setInterval(pollHistory, 45000);
-+    return () => {
-+      cancelled = true;
-+      clearInterval(interval);
-+      for (const c of controllers) c.abort();
-+    };
-+  }, [activeTab]);
- 
++  // ── Server Win Rate, filtered (Phase 6) ────────────────────────────────
++  // Four routes, chosen by (pairScope, timeRange):
++  //   selected + all   -> /api/stats?pair=X          (unchanged Phase 2 path)
++  //   all      + all   -> /api/stats                 (aggregate wins/losses)
++  //   selected + win   -> /api/history?pair=X        (count inside the window)
++  //   all      + win   -> /api/stats then /api/history per pair, in parallel
++  //
++  // Windowed routes derive from history, which the worker caps at 50 rows per
++  // pair with no pagination — so those counts can be a lower bound. Coverage is
++  // tracked and surfaced rather than silently rounded off.
    useEffect(() => {
      if (activeTab !== 'history') return;
-@@ -454,7 +494,19 @@ export default function App() {
-   const marketClosedData = signalData && (signalData.marketStatus === 'CLOSED' || signalData.signal === null)
-     ? signalData
-     : null;
--  const tradableSignalData = signalData?.signal && signalData.session
-+
-+  // BUG #7: backend v6.9.2 forces NO_TRADE while a pair is in cooldown. Show a
-+  // dedicated card instead of an unexplained "NO_TRADE".
-+  const circuitBreakerData = signalData?.circuitBreaker?.tripped && !marketClosedData
-+    ? {
-+        pair: signalData.pair,
-+        cooldownUntil: signalData.circuitBreaker.cooldownUntil,
-+        lossStreak: signalData.circuitBreaker.lossStreak,
-+        wouldBeSignal: signalData.circuitBreaker.wouldBeSignal,
-+      }
-+    : null;
-+
-+  const tradableSignalData = signalData?.signal && signalData.session && !circuitBreakerData
-     ? (signalData as TradableSignalData)
-     : null;
  
-@@ -518,6 +570,16 @@ export default function App() {
-           <MarketClosedCard data={marketClosedData} onSwitchPair={handleMarketClosedSwitch} />
-         )}
+     let cancelled = false;
+     const controller = new AbortController();
+-    const timeoutId = setTimeout(() => controller.abort(), 10000);
++    // Windowed All-Pairs fans out to ~13 requests; give it more room than the
++    // single-request paths but still bail rather than hang the tab.
++    const budgetMs = serverWrFilter.pairScope === 'all' && serverWrFilter.timeRange !== 'all' ? 20000 : 10000;
++    const timeoutId = setTimeout(() => controller.abort(), budgetMs);
++
++    const cacheKey = filterCacheKey(serverWrFilter, selectedPair);
++    const cached = serverWrCacheRef.current.get(cacheKey);
++    const cacheFresh = cached && Date.now() - cached.at < SERVER_WR_CACHE_TTL_MS;
++    if (cacheFresh && serverWrReloadKey === lastServerWrReloadRef.current) {
++      setServerStatsState(cached.state);
++      clearTimeout(timeoutId);
++      return () => { cancelled = true; controller.abort(); clearTimeout(timeoutId); };
++    }
++    lastServerWrReloadRef.current = serverWrReloadKey;
  
-+        {activeTab === 'home' && circuitBreakerData && (
-+          <CircuitBreakerCard
-+            pair={circuitBreakerData.pair}
-+            cooldownUntil={circuitBreakerData.cooldownUntil}
-+            lossStreak={circuitBreakerData.lossStreak}
-+            wouldBeSignal={circuitBreakerData.wouldBeSignal}
-+            onSwitchPair={handleMarketClosedSwitch}
-+          />
-+        )}
-+
-         {activeTab === 'home' && tradableSignalData && (
-           <div className="space-y-3 fade-in">
-             <MaterialSignalCard data={tradableSignalData} onPairClick={() => setPickerOpen(true)} />
-@@ -795,6 +857,8 @@ export default function App() {
-               <p className="text-[#b0b3b8] text-sm">Customize your experience</p>
-             </div>
+     setServerStatsState(prev => ({
+       pair: selectedPair,
++      filter: serverWrFilter,
+       loading: true,
+-      stats: prev?.pair === selectedPair ? prev.stats : null,
+-      message: prev?.pair === selectedPair ? prev.message : undefined,
++      // keep the previous numbers visible while refetching the SAME view;
++      // clear them when the view changed, so stale figures never sit under a
++      // heading that now says something else
++      stats: prev && sameFilter(prev.filter, serverWrFilter) && prev.pair === selectedPair ? prev.stats : null,
++      message: undefined,
+     }));
  
-+            <HealthPill />
-+
-             <div className="md-surface overflow-hidden mb-4">
-               <SettingRow
-                 icon={autoRefresh ? RefreshCw : Zap}
-@@ -1018,6 +1082,9 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
-   const confidenceNum = parseInt(data.signal.confidence) || 0;
-   const best = data.signal.bestTimeframe;
-   const entryPrice = data.signal.recommendations?.[best?.timeframe as '5min']?.entry?.price;
-+  const coreConfidence = data.signal.coreConfidence;
-+  const structureOverall = data.signal.structureVerdict?.overall;
-+  const aiBadge = aiStatusBadge(deriveAiStatus(data));
- 
-   return (
-     <div className="md-surface-highest p-0 overflow-hidden scale-in">
-@@ -1059,13 +1126,48 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
-           </div>
-         </div>
- 
--        <div className="flex items-center gap-2 mb-4">
-+        <div className="flex items-center gap-2 mb-4 flex-wrap">
-           <div className={cn("px-3 py-1.5 rounded-lg text-sm font-medium", data.signal.grade.grade === 'A' ? "bg-[#81c784]/20 text-[#81c784]" : data.signal.grade.grade === 'B' ? "bg-[#42a5f5]/20 text-[#42a5f5]" : data.signal.grade.grade === 'C' ? "bg-[#ffb74d]/20 text-[#ffb74d]" : "bg-[#ef5350]/20 text-[#ef5350]")}>
-             Grade {data.signal.grade.grade} · {data.signal.grade.label}
-           </div>
-           {best?.timeframe && <div className="px-3 py-1.5 bg-[#323238] rounded-lg text-xs font-medium flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />{best.timeframe}</div>}
-         </div>
- 
-+        {/* ── B5 instrumentation badges (backend v6.9.2) ── */}
-+        <div className="flex items-center gap-2 mb-4 flex-wrap">
-+          {/* Core vs displayed confidence: only worth showing when filters/AI
-+              actually moved the number, otherwise it is just noise. */}
-+          {typeof coreConfidence === 'number' && Math.abs(coreConfidence - confidenceNum) >= 5 && (
-+            <div className="px-2.5 py-1 rounded-lg bg-[#9575cd]/15 text-[#b39ddb] text-[11px] font-medium">
-+              Displayed {confidenceNum}% · Core {coreConfidence}%
-+            </div>
-+          )}
-+
-+          {structureOverall && structureOverall !== 'N/A' && (
-+            <div className={cn(
-+              "px-2.5 py-1 rounded-lg text-[11px] font-medium",
-+              structureOverall === 'ALIGNED' && "bg-[#81c784]/15 text-[#81c784]",
-+              structureOverall === 'AGAINST' && "bg-[#ef5350]/15 text-[#ef5350]",
-+              structureOverall === 'MIXED' && "bg-[#ffb74d]/15 text-[#ffb74d]",
-+              structureOverall === 'NEUTRAL' && "bg-[#bdbdbd]/15 text-[#bdbdbd]",
-+            )}>
-+              Structure {structureOverall}
-+            </div>
-+          )}
-+
-+          {aiBadge && (
-+            <div className={cn("px-2.5 py-1 rounded-lg text-[11px] font-medium", aiBadge.className)}>
-+              {aiBadge.label}
-+            </div>
-+          )}
-+
-+          {data.entrySource && (
-+            <div className="px-2.5 py-1 rounded-lg bg-[#323238] text-[#b0b3b8] text-[11px] font-medium">
-+              {ENTRY_SOURCE_LABEL[data.entrySource] || data.entrySource}
-+            </div>
-+          )}
-+        </div>
-+
-         {entryPrice && (
-           <div className="grid grid-cols-3 gap-3 pt-4 border-t border-[#3a3a3e]">
-             <div><div className="text-xs text-[#b0b3b8] mb-1">Entry Price</div><div className="text-base font-medium number-tabular">{entryPrice}</div></div>
-@@ -1307,6 +1409,34 @@ function HistoryRow({ entry, onReport, onDelete, isLast }: { entry: HistoryEntry
-                 )}
-               </div>
-             )}
-+
-+            {/* ── B5 diagnostics row (backend v6.9.2). Rendered only when the
-+                record actually carries them, so pre-upgrade localStorage
-+                entries keep displaying exactly as before. ── */}
-+            {(entry.structureVerdict || entry.aiStatus || typeof entry.coreConfidence === 'number' || entry.entrySource) && (
-+              <div className="flex items-center gap-1.5 mt-1 flex-wrap text-[9px] text-[#6e6e73]">
-+                {entry.structureVerdict && entry.structureVerdict !== 'N/A' && (
-+                  <span className={cn(
-+                    "px-1 rounded",
-+                    entry.structureVerdict === 'ALIGNED' && "bg-[#81c784]/15 text-[#81c784]",
-+                    entry.structureVerdict === 'AGAINST' && "bg-[#ef5350]/15 text-[#ef5350]",
-+                    entry.structureVerdict === 'MIXED' && "bg-[#ffb74d]/15 text-[#ffb74d]",
-+                    entry.structureVerdict === 'NEUTRAL' && "bg-[#bdbdbd]/15 text-[#bdbdbd]",
-+                  )}>
-+                    {entry.structureVerdict}
-+                  </span>
-+                )}
-+                {entry.aiStatus && entry.aiStatus !== 'SKIPPED' && (
-+                  <span className="px-1 rounded bg-[#27272d] text-[#b0b3b8]">AI: {entry.aiStatus}</span>
-+                )}
-+                {typeof entry.coreConfidence === 'number' && (
-+                  <span className="px-1 rounded bg-[#9575cd]/15 text-[#b39ddb]">Core {entry.coreConfidence}%</span>
-+                )}
-+                {entry.entrySource && (
-+                  <span className="px-1 rounded bg-[#27272d] text-[#b0b3b8]">Src: {entry.entrySource}</span>
-+                )}
-+              </div>
-+            )}
-           </div>
-         </div>
-         {entry.result === 'WIN' && (
-diff --git a/src/components/CircuitBreakerCard.tsx b/src/components/CircuitBreakerCard.tsx
-new file mode 100644
-index 0000000..0db98c7
---- /dev/null
-+++ b/src/components/CircuitBreakerCard.tsx
-@@ -0,0 +1,146 @@
-+import { useEffect, useState } from 'react';
-+import { Pause, Clock, Zap, ShieldAlert } from 'lucide-react';
-+import { cn } from '../utils/cn';
-+
-+interface Props {
-+  pair: string;
-+  cooldownUntil: string;
-+  lossStreak?: number;
-+  /** Direction the engine would have emitted if the breaker were not tripped. */
-+  wouldBeSignal?: string;
-+  onSwitchPair?: (pair: string) => void;
-+}
-+
-+/**
-+ * Backend v6.9.2 trips a per-pair circuit breaker after 2 consecutive losses and
-+ * forces NO_TRADE for a 6h cooldown. Without this card the user just saw a bare
-+ * "NO_TRADE" with no reason and no end time.
-+ *
-+ * Styling mirrors the existing MarketClosedCard (same md-surface-highest shell,
-+ * accent bar, 2x2 info blocks) so the two "why is there no signal" states read
-+ * as siblings — amber here vs cyan there.
-+ */
-+export function CircuitBreakerCard({ pair, cooldownUntil, lossStreak, wouldBeSignal, onSwitchPair }: Props) {
-+  const [remaining, setRemaining] = useState(() => formatRemaining(cooldownUntil));
-+
-+  useEffect(() => {
-+    setRemaining(formatRemaining(cooldownUntil));
-+    // 30s cadence keeps the "1h 12m" text honest without a per-second repaint
-+    const interval = setInterval(() => setRemaining(formatRemaining(cooldownUntil)), 30000);
-+    return () => clearInterval(interval);
-+  }, [cooldownUntil]);
-+
-+  const resumesAt = (() => {
-+    const d = new Date(cooldownUntil);
-+    return Number.isNaN(d.getTime()) ? null : d;
-+  })();
-+
-+  const alternatives = suggestAlternatives(pair);
-+
-+  return (
-+    <div className="space-y-3 fade-in">
-+      <div className="md-surface-highest p-0 overflow-hidden scale-in border border-[#ffb400]/10">
-+        <div className="h-1.5 w-full bg-gradient-to-r from-[#ffb400] via-[#ff9800] to-[#ef6c00]" />
-+        <div className="p-5">
-+          <div className="flex items-start justify-between gap-3 mb-5">
-+            <div className="flex items-start gap-4">
-+              <div className="w-14 h-14 rounded-2xl bg-[#ffb400]/15 flex items-center justify-center shadow-lg shadow-[#ffb400]/5">
-+                <Pause className="w-7 h-7 text-[#ffb400]" strokeWidth={2.4} />
-+              </div>
-+              <div>
-+                <div className="text-xs uppercase tracking-wider text-[#ffb400] font-bold mb-1">Risk control</div>
-+                <h2 className="text-2xl font-medium leading-tight">Circuit Breaker Active</h2>
-+                <p className="text-sm text-[#b0b3b8] mt-1 leading-relaxed">
-+                  {pair} is paused after {lossStreak ?? 2} consecutive losses.
-+                </p>
-+              </div>
-+            </div>
-+            <div className="px-3 py-1.5 rounded-full bg-[#27272d] text-[#ffb400] text-xs font-bold border border-[#ffb400]/20 whitespace-nowrap">
-+              COOLDOWN
-+            </div>
-+          </div>
-+
-+          <div className="grid gap-3 mb-4">
-+            <div className="bg-[#1e1e23] rounded-2xl p-4 border border-[#3a3a3e]/60">
-+              <div className="flex items-center gap-2 text-xs text-[#b0b3b8] mb-2">
-+                <Clock className="w-4 h-4 text-[#ffb400]" />
-+                <span>Trading resumes</span>
-+              </div>
-+              <div className="text-base font-medium text-[#e3e2e6] leading-snug">
-+                {resumesAt ? resumesAt.toLocaleString() : 'Cooldown time unavailable'}
-+              </div>
-+              <div className="inline-flex items-center gap-2 mt-3 px-3 py-1.5 rounded-full bg-[#ffb400]/10 text-[#ffb400] text-xs font-bold">
-+                <div className="w-2 h-2 rounded-full bg-[#ffb400] animate-pulse" />
-+                {remaining === 'refreshing…' ? 'Refreshing…' : `Resumes in ${remaining}`}
-+              </div>
-+            </div>
-+
-+            <div className="bg-[#27272d] rounded-2xl p-4 border border-[#3a3a3e]/50">
-+              <div className="text-xs uppercase tracking-wider text-[#8e9099] font-medium mb-2">Why this happens</div>
-+              <p className="text-sm text-[#c4c6d0] leading-relaxed">
-+                Two losses in a row on one pair is the point where chasing a recovery trade
-+                usually deepens the drawdown. The pair stays muted for a fixed window; a win
-+                on it resets the streak immediately.
-+              </p>
-+            </div>
-+
-+            {wouldBeSignal && wouldBeSignal !== 'NO_TRADE' && (
-+              <div className="bg-[#1e1e23] rounded-2xl p-4 border border-[#3a3a3e]/60">
-+                <div className="flex items-center gap-2 text-xs text-[#b0b3b8] mb-2">
-+                  <ShieldAlert className="w-4 h-4 text-[#b39ddb]" />
-+                  <span>Suppressed signal</span>
-+                </div>
-+                <div className="flex items-center gap-2">
-+                  <span className={cn(
-+                    'text-base font-bold',
-+                    wouldBeSignal === 'BUY' && 'text-[#81c784]',
-+                    wouldBeSignal === 'SELL' && 'text-[#ef5350]',
-+                  )}>
-+                    {wouldBeSignal}
-+                  </span>
-+                  <span className="text-xs text-[#6e6e73]">
-+                    would have fired — logged server-side, not traded
-+                  </span>
-+                </div>
-+              </div>
-+            )}
-+          </div>
-+
-+          {onSwitchPair && alternatives.length > 0 && (
-+            <div className="grid grid-cols-2 gap-2">
-+              {alternatives.map(alt => (
-+                <button
-+                  key={alt}
-+                  onClick={() => onSwitchPair(alt)}
-+                  className="py-3 rounded-2xl bg-[#4dd0e1]/15 text-[#4dd0e1] text-sm font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
-+                >
-+                  <Zap className="w-4 h-4" />
-+                  {alt}
-+                </button>
-+              ))}
-+            </div>
-+          )}
-+        </div>
-+      </div>
-+    </div>
-+  );
-+}
-+
-+function formatRemaining(cooldownUntil: string): string {
-+  const target = new Date(cooldownUntil).getTime();
-+  if (Number.isNaN(target)) return 'refreshing…';
-+  const ms = target - Date.now();
-+  if (ms <= 0) return 'refreshing…';
-+  const h = Math.floor(ms / 3600000);
-+  const m = Math.floor((ms % 3600000) / 60000);
-+  if (h > 0) return `${h}h ${m}m`;
-+  if (m > 0) return `${m}m`;
-+  return 'under a minute';
-+}
-+
-+/** Never suggest the pair that is currently muted. */
-+function suggestAlternatives(pair: string): string[] {
-+  const pool = ['BTC/USD', 'ETH/USD', 'EUR/USD', 'GBP/USD'];
-+  const current = pair.toUpperCase().replace(/[^A-Z]/g, '');
-+  return pool.filter(p => p.replace('/', '') !== current).slice(0, 2);
-+}
-diff --git a/src/components/HealthPill.tsx b/src/components/HealthPill.tsx
-new file mode 100644
-index 0000000..99c621b
---- /dev/null
-+++ b/src/components/HealthPill.tsx
-@@ -0,0 +1,77 @@
-+import { useEffect, useState } from 'react';
-+import { Activity, KeyRound, Gauge } from 'lucide-react';
-+import { API_BASE } from '../config';
-+import { WorkerHealth } from '../types';
-+
-+/**
-+ * Small worker-health readout for the Settings tab: how many TwelveData keys the
-+ * worker actually loaded, and how many API calls it has spent today.
-+ *
-+ * Both numbers come from backend v6.9.2's extended /health payload
-+ * (`apiKeysLoaded`, `quotaUsedToday`). Renders nothing if /health is
-+ * unreachable — this is diagnostics, never a blocker.
-+ */
-+export function HealthPill() {
-+  const [health, setHealth] = useState<WorkerHealth | null>(null);
-+
-+  useEffect(() => {
-+    let cancelled = false;
-+
-+    const fetchHealth = async () => {
-+      const controller = new AbortController();
-+      const timeoutId = setTimeout(() => controller.abort(), 8000);
-+      try {
-+        const res = await fetch(`${API_BASE}/health`, { signal: controller.signal });
-+        if (!res.ok) return;
-+        const data: WorkerHealth = await res.json();
-+        if (!cancelled) setHealth(data);
-+      } catch {
-+        // silent — diagnostics only
-+      } finally {
-+        clearTimeout(timeoutId);
-+      }
+-    const fetchServerStats = async () => {
+-      try {
+-        const cleanPair = selectedPair.replace(/\//g, '').toLowerCase();
+-        const response = await fetch(`${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair)}`, { signal: controller.signal });
+-        if (!response.ok) throw new Error('stats');
+-        const payload: { pair?: string; stats?: ServerPairStats | null; message?: string } = await response.json();
++    // Cache only successful computations — errors must stay retryable.
++    const publish = (next: ServerStatsState) => {
++      if (next.stats) serverWrCacheRef.current.set(cacheKey, { at: Date.now(), state: next });
++      setServerStatsState(next);
 +    };
 +
-+    fetchHealth();
-+    const interval = setInterval(fetchHealth, 5 * 60 * 1000);
-+    return () => { cancelled = true; clearInterval(interval); };
-+  }, []);
++    const getJson = async (url: string) => {
++      const res = await fetch(url, { signal: controller.signal });
++      if (!res.ok) throw new Error('http ' + res.status);
++      return res.json();
++    };
 +
-+  if (!health) return null;
++    const cleanPair = (pair: string) => pair.replace(/\//g, '').toLowerCase();
 +
-+  const keys = health.apiKeysLoaded;
-+  const quota = health.quotaUsedToday;
++    const fetchPairList = async (): Promise<StatsPairRow[]> => {
++      const payload = await getJson(`${API_BASE}/api/stats`);
++      const pairs = Array.isArray(payload?.pairs) ? (payload.pairs as StatsPairRow[]) : [];
++      return pairs.filter(p => p && typeof p.pair === 'string' && isSupportedPair(p.pair));
++    };
 +
-+  return (
-+    <div className="md-surface overflow-hidden mb-4">
-+      <div className="flex items-center justify-between p-4">
-+        <div className="flex items-center gap-3">
-+          <div className="w-10 h-10 rounded-xl bg-[#81c784]/15 flex items-center justify-center">
-+            <Activity className="w-5 h-5 text-[#81c784]" />
-+          </div>
-+          <div>
-+            <div className="font-medium text-sm">Worker Health</div>
-+            <div className="text-xs text-[#b0b3b8]">
-+              {health.status === 'healthy' ? 'Online' : health.status || 'Unknown'}
-+              {health.version ? ` · v${health.version}` : ''}
++    const compute = async () => {
++      const { pairScope, timeRange } = serverWrFilter;
++      const cutoff = windowCutoff(timeRange);
++
++      // ── selected + all time: the original endpoint ──
++      if (pairScope === 'selected' && timeRange === 'all') {
++        const payload = await getJson(`${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair(selectedPair))}`);
+         if (cancelled) return;
+-        setServerStatsState({
+-          pair: payload.pair || selectedPair,
++        publish({
++          pair: payload?.pair || selectedPair,
++          filter: serverWrFilter,
++          loading: false,
++          stats: payload?.stats || null,
++          message: payload?.message,
++        });
++        return;
++      }
++
++      // ── all pairs + all time: aggregate the stats index ──
++      if (pairScope === 'all' && timeRange === 'all') {
++        const pairs = await fetchPairList();
++        if (cancelled) return;
++        const agg = aggregateAllPairs(pairs);
++        publish({
++          pair: selectedPair,
++          filter: serverWrFilter,
+           loading: false,
+-          stats: payload.stats || null,
+-          message: payload.message,
++          stats: {
++            isAggregate: true, scope: 'all', window: 'all',
++            totalWins: agg.totalWins, totalLosses: agg.totalLosses,
++            totalSignals: agg.totalSignals, winRate: agg.winRate,
++            pairCount: agg.pairCount,
++            lastUpdated: agg.lastUpdated,
++            // /api/stats counters are lifetime and authoritative — no cap issue
++            coverage: { complete: true, truncatedPairs: [] },
++          },
++          message: agg.totalSignals === 0 ? 'No decided signals yet.' : undefined,
+         });
+-      } catch (e) {
+-        if (!cancelled) {
+-          console.warn('Server stats fetch failed; hiding section.', { pair: selectedPair, error: e });
+-          setServerStatsState(null);
++        return;
++      }
++
++      // ── selected pair + window: one history call ──
++      if (pairScope === 'selected') {
++        const payload = await getJson(
++          `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(selectedPair))}&limit=50`);
++        if (cancelled) return;
++        const count = countWindowed(payload, cutoff);
++        publish({
++          pair: selectedPair,
++          filter: serverWrFilter,
++          loading: false,
++          stats: {
++            isAggregate: true, scope: 'selected', window: timeRange,
++            totalWins: count.wins, totalLosses: count.losses,
++            totalSignals: count.decided,
++            winRate: count.decided > 0 ? count.wins / count.decided : 0,
++            recordsConsidered: count.recordsConsidered,
++            coverage: { complete: count.complete, truncatedPairs: count.complete ? [] : [selectedPair] },
++          },
++          message: count.decided === 0
++            ? `No decided signals for ${selectedPair} in this window.` : undefined,
++        });
++        return;
++      }
++
++      // ── all pairs + window: fan out ──
++      const pairs = await fetchPairList();
++      if (cancelled) return;
++      if (pairs.length === 0) throw new Error('no pairs');
++
++      const settled = await Promise.all(pairs.map(async p => {
++        try {
++          const payload = await getJson(
++            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(p.pair))}&limit=50`);
++          return { pair: p.pair, count: countWindowed(payload, cutoff) };
++        } catch {
++          return { pair: p.pair, count: null };
+         }
+-      } finally {
+-        clearTimeout(timeoutId);
++      }));
++      if (cancelled) return;
++
++      const failed = settled.filter(r => r.count === null).length;
++      // Spec: if half or more of the fan-out fails the number is not worth
++      // showing — offer a retry instead of a confidently wrong figure.
++      if (failed >= Math.ceil(pairs.length / 2)) {
++        setServerStatsState({
++          pair: selectedPair, filter: serverWrFilter, loading: false, stats: null,
++          message: `Insufficient data — ${failed} of ${pairs.length} pair requests failed.`,
++          retryable: true,
++        });
++        return;
+       }
++
++      const combined = combineWindowed(settled);
++      publish({
++        pair: selectedPair,
++        filter: serverWrFilter,
++        loading: false,
++        stats: {
++          isAggregate: true, scope: 'all', window: timeRange,
++          totalWins: combined.totalWins, totalLosses: combined.totalLosses,
++          totalSignals: combined.totalSignals, winRate: combined.winRate,
++          pairCount: combined.pairCount,
++          recordsConsidered: combined.recordsConsidered,
++          coverage: combined.coverage,
++        },
++        message: combined.totalSignals === 0
++          ? `No decided signals across any pair in this window.` : undefined,
++        retryable: failed > 0 ? true : undefined,
++      });
+     };
+ 
+-    fetchServerStats();
++    compute().catch(async (e) => {
++      if (cancelled || e?.name === 'AbortError') return;
++      console.warn('Server win-rate fetch failed.', { filter: serverWrFilter, pair: selectedPair, error: e });
++
++      // Spec §4.6: if the All Pairs view is unavailable, degrade to the
++      // selected pair rather than showing an empty card.
++      if (serverWrFilter.pairScope === 'all') {
++        try {
++          const payload = await getJson(
++            `${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair(selectedPair))}`);
++          if (cancelled) return;
++          setServerStatsState({
++            pair: payload?.pair || selectedPair,
++            filter: { pairScope: 'selected', timeRange: 'all' },
++            loading: false,
++            stats: payload?.stats || null,
++            fallbackNote: 'All Pairs view unavailable — showing selected pair.',
++            retryable: true,
++          });
++          return;
++        } catch { /* fall through */ }
++      }
++      if (!cancelled) {
++        setServerStatsState({
++          pair: selectedPair, filter: serverWrFilter, loading: false, stats: null,
++          message: 'Server stats unavailable.', retryable: true,
++        });
++      }
++    }).finally(() => clearTimeout(timeoutId));
+ 
+     return () => {
+       cancelled = true;
+       controller.abort();
+       clearTimeout(timeoutId);
+     };
+-  }, [activeTab, selectedPair]);
++  }, [activeTab, selectedPair, serverWrFilter, serverWrReloadKey]);
+ 
+   const pendingCount = history.filter(h => !h.result || h.result === 'PENDING').length;
+   const wins = history.filter(h => h.result === 'WIN').length;
+@@ -821,7 +1036,33 @@ export default function App() {
+               <StatCard label="Win %" value={`${winRate}%`} color="#ffb74d" />
+             </div>
+ 
+-            <ServerStatsCard state={serverStatsState} selectedPair={selectedPair} />
++            <div className="space-y-2 mb-3">
++              <FilterChipRow
++                label="Pair:"
++                chips={[
++                  { id: 'all', label: 'All Pairs' },
++                  { id: 'selected', label: selectedPair },
++                ]}
++                selectedId={serverWrFilter.pairScope}
++                onSelect={(id) => setServerWrFilter(prev => ({ ...prev, pairScope: id as PairScope }))}
++              />
++              <FilterChipRow
++                label="Time:"
++                chips={[
++                  { id: 'all', label: 'All Time' },
++                  { id: 'today', label: 'Today' },
++                  { id: '7d', label: 'Last 7 Days' },
++                ]}
++                selectedId={serverWrFilter.timeRange}
++                onSelect={(id) => setServerWrFilter(prev => ({ ...prev, timeRange: id as TimeRange }))}
++              />
 +            </div>
-+          </div>
++
++            <ServerStatsCard
++              state={serverStatsState}
++              selectedPair={selectedPair}
++              onRetry={() => setServerWrReloadKey(k => k + 1)}
++            />
+ 
+             {/* List */}
+             <div className="md-surface overflow-hidden">
+@@ -1011,16 +1252,36 @@ function formatServerWinRate(value?: number) {
+   return `${pct.toFixed(1)}%`;
+ }
+ 
+-function ServerStatsCard({ state, selectedPair }: { state: ServerStatsState | null; selectedPair: string }) {
++function ServerStatsCard({ state, selectedPair, onRetry }: {
++  state: ServerStatsState | null;
++  selectedPair: string;
++  onRetry?: () => void;
++}) {
+   if (!state) return null;
+ 
+   const stats = state.stats;
+   const hasStats = !!stats;
+-  const lastUpdated = stats?.lastUpdated ? new Date(stats.lastUpdated) : null;
++  const aggregate = isAggregateStats(stats) ? stats : null;
++  const pairStats = !aggregate && stats ? (stats as ServerPairStats) : null;
++
++  const wins = aggregate ? aggregate.totalWins : (pairStats?.wins ?? 0);
++  const losses = aggregate ? aggregate.totalLosses : (pairStats?.losses ?? 0);
++  const signals = aggregate ? aggregate.totalSignals : pairStats?.totalSignals;
++  const winRate = aggregate ? aggregate.winRate : pairStats?.winRate;
++
++  const lastUpdatedRaw = aggregate ? aggregate.lastUpdated : pairStats?.lastUpdated;
++  const lastUpdated = lastUpdatedRaw ? new Date(lastUpdatedRaw) : null;
+   const lastUpdatedLabel = lastUpdated && !Number.isNaN(lastUpdated.getTime())
+     ? lastUpdated.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+     : null;
+ 
++  const subtitle = filterSubtitle(state.filter, state.pair || selectedPair);
++  const windowed = state.filter.timeRange !== 'all';
++  // Confidence adjustment is a lifetime per-pair number — meaningless once the
++  // view is aggregated or windowed, so it is only shown on the original path.
++  const showConfidenceAdj = !windowed && state.filter.pairScope === 'selected' && pairStats;
++  const truncated = aggregate?.coverage && !aggregate.coverage.complete;
++
+   return (
+     <div className="md-surface p-4 mb-4 border border-[#42a5f5]/10">
+       <div className="flex items-center justify-between gap-3 mb-3">
+@@ -1030,45 +1291,86 @@ function ServerStatsCard({ state, selectedPair }: { state: ServerStatsState | nu
+           </div>
+           <div>
+             <div className="text-sm font-medium">Server Win Rate</div>
+-            <div className="text-xs text-[#8e9099]">All users · {state.pair || selectedPair}</div>
++            <div className="text-xs text-[#8e9099]">{subtitle}</div>
+           </div>
+         </div>
+         {state.loading && <RefreshCw className="w-4 h-4 text-[#42a5f5] animate-spin" />}
+       </div>
+ 
++      {state.fallbackNote && (
++        <div className="mb-3 rounded-xl bg-[#ffb74d]/10 border border-[#ffb74d]/20 px-3 py-2 text-[11px] text-[#ffb74d]">
++          {state.fallbackNote}
 +        </div>
-+        <div className="flex items-center gap-2">
-+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1e1e23] rounded-full">
-+            <KeyRound className="w-3 h-3 text-[#42a5f5]" />
-+            <span className="text-xs text-[#b0b3b8] number-tabular">
-+              {typeof keys === 'number' ? keys : '—'} keys
-+            </span>
-+          </div>
-+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1e1e23] rounded-full">
-+            <Gauge className="w-3 h-3 text-[#ffb74d]" />
-+            <span className="text-xs text-[#b0b3b8] number-tabular">
-+              {typeof quota === 'number' ? quota.toLocaleString() : '—'}
-+            </span>
-+          </div>
++      )}
++
+       {state.loading && !hasStats ? (
+-        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8]">Loading server stats…</div>
++        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8] flex items-center gap-2">
++          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
++          {state.filter.pairScope === 'all' && windowed
++            ? 'Computing across all pairs…'
++            : 'Loading server stats…'}
 +        </div>
-+      </div>
+       ) : hasStats ? (
+         <>
+           <div className="grid grid-cols-3 gap-2">
+             <div className="bg-[#1e1e23] rounded-xl p-3">
+               <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">Server Win %</div>
+-              <div className="text-lg font-medium number-tabular text-[#4dd0e1]">{formatServerWinRate(stats.winRate)}</div>
++              <div className="text-lg font-medium number-tabular text-[#4dd0e1]">{formatServerWinRate(winRate)}</div>
+             </div>
+             <div className="bg-[#1e1e23] rounded-xl p-3">
+-              <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">Signals</div>
+-              <div className="text-lg font-medium number-tabular">{stats.totalSignals ?? '—'}</div>
++              <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">{windowed ? 'Decided' : 'Signals'}</div>
++              <div className="text-lg font-medium number-tabular">{signals ?? '—'}</div>
+             </div>
+             <div className="bg-[#1e1e23] rounded-xl p-3">
+               <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">W / L</div>
+               <div className="text-lg font-medium number-tabular">
+-                <span className="text-[#81c784]">{stats.wins ?? 0}</span>
++                <span className="text-[#81c784]">{wins}</span>
+                 <span className="text-[#6e6e73]"> / </span>
+-                <span className="text-[#ef5350]">{stats.losses ?? 0}</span>
++                <span className="text-[#ef5350]">{losses}</span>
+               </div>
+             </div>
+           </div>
++
+           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-[#6e6e73]">
+-            {typeof stats.sampleSize === 'number' && <span>Lookback sample: {stats.sampleSize}</span>}
+-            {typeof stats.dynamicConfidenceAdjustment === 'number' && (
+-              <span>· Confidence adj: {stats.dynamicConfidenceAdjustment > 0 ? '+' : ''}{stats.dynamicConfidenceAdjustment}</span>
++            {windowed && typeof aggregate?.recordsConsidered === 'number' && (
++              <span>Filtered from {aggregate.recordsConsidered} recent records · {TIME_RANGE_LABEL[state.filter.timeRange]}</span>
++            )}
++            {!windowed && aggregate && typeof aggregate.pairCount === 'number' && (
++              <span>{aggregate.pairCount} pairs contributing</span>
++            )}
++            {!windowed && pairStats && typeof pairStats.sampleSize === 'number' && (
++              <span>Lookback sample: {pairStats.sampleSize}</span>
++            )}
++            {showConfidenceAdj && typeof pairStats.dynamicConfidenceAdjustment === 'number' && (
++              <span>· Confidence adj: {pairStats.dynamicConfidenceAdjustment > 0 ? '+' : ''}{pairStats.dynamicConfidenceAdjustment}</span>
+             )}
+             {lastUpdatedLabel && <span>· Updated {lastUpdatedLabel}</span>}
+           </div>
++
++          {truncated && (
++            <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#ffb74d]/10 border border-[#ffb74d]/20 px-3 py-2 text-[11px] text-[#ffb74d]">
++              <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
++              <span>
++                At least {signals} — the server keeps only the 50 most recent signals per pair,
++                so older results inside this window are no longer retrievable
++                {aggregate?.coverage?.truncatedPairs?.length
++                  ? ` (${aggregate.coverage.truncatedPairs.slice(0, 3).join(', ')}${aggregate.coverage.truncatedPairs.length > 3 ? ` +${aggregate.coverage.truncatedPairs.length - 3} more` : ''})`
++                  : ''}.
++              </span>
++            </div>
++          )}
+         </>
+       ) : (
+-        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8]">
+-          {state.message || 'No server stats yet for this pair.'}
++        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8] flex items-center justify-between gap-3">
++          <span>{state.message || 'No server stats yet for this pair.'}</span>
++          {state.retryable && onRetry && (
++            <button
++              onClick={onRetry}
++              className="px-3 py-1.5 rounded-full bg-[#42a5f5]/15 text-[#42a5f5] text-[11px] font-medium active:scale-95 transition-transform whitespace-nowrap"
++            >
++              Retry
++            </button>
++          )}
+         </div>
+       )}
+     </div>
+diff --git a/src/components/FilterChipRow.tsx b/src/components/FilterChipRow.tsx
+new file mode 100644
+index 0000000..ba3f8a5
+--- /dev/null
++++ b/src/components/FilterChipRow.tsx
+@@ -0,0 +1,44 @@
++import { cn } from '../utils/cn';
++
++export interface Chip {
++  id: string;
++  label: string;
++}
++
++interface Props {
++  chips: Chip[];
++  selectedId: string;
++  onSelect: (id: string) => void;
++  /** Leading caption, e.g. "Pair:" / "Time:" */
++  label?: string;
++  disabled?: boolean;
++}
++
++export function FilterChipRow({ chips, selectedId, onSelect, label, disabled }: Props) {
++  return (
++    <div className="flex items-center gap-2 flex-wrap" role="group" aria-label={label}>
++      {label && <span className="text-xs text-[#b0b3b8] mr-1">{label}</span>}
++      {chips.map(chip => {
++        const active = selectedId === chip.id;
++        return (
++          <button
++            key={chip.id}
++            type="button"
++            aria-pressed={active}
++            disabled={disabled}
++            onClick={() => onSelect(chip.id)}
++            className={cn(
++              'px-3 py-1.5 rounded-full text-xs font-medium transition-colors active:scale-95',
++              active
++                ? 'bg-[#4dd0e1] text-[#00363a]'
++                : 'bg-[#1e1e23] text-[#b0b3b8] border border-[#3a3a3e]/50 hover:bg-[#2a2a2f]',
++              disabled && 'opacity-50 pointer-events-none',
++            )}
++          >
++            {chip.label}
++          </button>
++        );
++      })}
 +    </div>
 +  );
 +}
-diff --git a/src/components/PairSelector.tsx b/src/components/PairSelector.tsx
-index 66b0105..718a6ab 100644
---- a/src/components/PairSelector.tsx
-+++ b/src/components/PairSelector.tsx
-@@ -1,5 +1,5 @@
- import { useState } from 'react';
--import { Search, X, Star, TrendingUp } from 'lucide-react';
-+import { Search, X, Star } from 'lucide-react';
- import { cn, haptic } from '../utils/cn';
- 
- interface Props {
-@@ -11,10 +11,10 @@ interface Props {
-   onToggleFavorite: (pair: string) => void;
- }
- 
-+// Commodities (XAU/XAG/WTI) intentionally absent — no backend support.
- const ALL_PAIRS = {
-   'Forex Majors': ['EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 'AUD/USD', 'NZD/USD', 'USD/CAD'],
-   'Forex Crosses': ['EUR/GBP', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'EUR/AUD', 'GBP/CHF', 'CHF/JPY'],
--  'Commodities': ['XAU/USD', 'XAG/USD', 'WTI/USD'],
-   'Crypto': ['BTC/USD', 'ETH/USD', 'XRP/USD', 'LTC/USD', 'BNB/USD', 'SOL/USD'],
-   'OTC': ['EURUSD-OTC', 'GBPUSD-OTC', 'USDJPY-OTC', 'AUDCAD-OTC', 'EURGBP-OTC']
- };
-@@ -174,7 +174,6 @@ function PairItem({
- }) {
-   const isOTC = pair.includes('OTC');
-   const isCrypto = ['BTC', 'ETH', 'XRP', 'LTC', 'BNB', 'SOL'].some(c => pair.includes(c));
--  const isCommodity = pair.startsWith('XAU') || pair.startsWith('XAG') || pair.startsWith('WTI');
- 
-   return (
-     <div className={cn(
-@@ -187,15 +186,14 @@ function PairItem({
-           "w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold",
-           isOTC ? "bg-[#ff9f0a]/20 text-[#ff9f0a]" :
-           isCrypto ? "bg-[#bf5af2]/20 text-[#bf5af2]" :
--          isCommodity ? "bg-[#ffd60a]/20 text-[#ffd60a]" :
-           "bg-[#0a84ff]/20 text-[#0a84ff]"
-         )}>
--          {isOTC ? 'OTC' : isCrypto ? '₿' : isCommodity ? <TrendingUp className="w-4 h-4" /> : pair.slice(0, 2)}
-+          {isOTC ? 'OTC' : isCrypto ? '₿' : pair.slice(0, 2)}
-         </div>
-         <div>
-           <div className="text-white font-semibold text-[15px]">{pair}</div>
-           <div className="text-white/40 text-xs">
--            {isOTC ? 'Over-the-counter' : isCrypto ? 'Cryptocurrency' : isCommodity ? 'Commodity' : 'Forex Pair'}
-+            {isOTC ? 'Over-the-counter' : isCrypto ? 'Cryptocurrency' : 'Forex Pair'}
-           </div>
-         </div>
-       </div>
-diff --git a/src/hooks/useScanner.ts b/src/hooks/useScanner.ts
-index 09aa1fc..5eeb089 100644
---- a/src/hooks/useScanner.ts
-+++ b/src/hooks/useScanner.ts
-@@ -29,7 +29,10 @@ interface BatchResponse {
- 
- const STORAGE_KEY = 'ftt_scanner_pairs';
- const SEEN_KEY = 'ftt_scanner_seen'; // map pair -> last consumed signalKey
--const DEFAULT_PAIRS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'XAU/USD', 'EURUSD-OTC'];
-+// XAU/USD removed — the backend has no gold support and always answers
-+// "Invalid pair", so the scanner row was permanently stuck on `error`.
-+// BTC/USD replaces it: crypto, 24/7, high liquidity.
-+const DEFAULT_PAIRS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'BTC/USD', 'EURUSD-OTC'];
- const BATCH_MAX_PAIRS = 3;
- 
- function loadPairs(): string[] {
-@@ -188,7 +191,9 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
-   const fetchOne = useCallback(async (pair: string) => {
-     setResults(prev => ({ ...prev, [pair]: { ...prev[pair], pair, status: 'loading' } }));
-     const controller = new AbortController();
--    const timeoutId = setTimeout(() => controller.abort(), 12000);
-+    // BUG #2: 12s was too tight once backend AI validation + a slow mobile
-+    // network stack up. Scanner is background work, so it can wait longer.
-+    const timeoutId = setTimeout(() => controller.abort(), 20000);
-     try {
-       const cleanPair = cleanPairForSignal(pair);
-       const res = await fetch(`${API_BASE}/api/signal?pair=${encodeURIComponent(cleanPair)}`, { signal: controller.signal });
-@@ -210,7 +215,9 @@ export function useScanner({ onSignalClick, intervalMs = 60000 }: UseScannerOpti
-     });
- 
-     const controller = new AbortController();
--    const timeoutId = setTimeout(() => controller.abort(), 12000);
-+    // BUG #2: /api/batch fans out to 3 pairs server-side; 12s was routinely
-+    // short of the p90 and showed the whole group as `error`.
-+    const timeoutId = setTimeout(() => controller.abort(), 20000);
-     try {
-       const params = new URLSearchParams({ pairs: group.join(',') });
-       const res = await fetch(`${API_BASE}/api/batch?${params.toString()}`, { signal: controller.signal });
-diff --git a/src/types.ts b/src/types.ts
-index 33c053a..b8257bd 100644
---- a/src/types.ts
-+++ b/src/types.ts
-@@ -99,6 +99,8 @@ export interface SignalData {
-   signal: {
-     finalSignal: 'BUY' | 'SELL' | 'NEUTRAL' | 'NO_TRADE';
-     confidence: string;
-+    // Backend v6.9.2 (B5): engine confidence BEFORE filters/AI adjustment.
-+    coreConfidence?: number;
-     grade: {
-       grade: string;
-       label: string;
-@@ -182,7 +184,20 @@ export interface SignalData {
-   timestamp: string;
-   nextRefresh?: string;
-   cacheHits?: number;
-+  // Backend v6.9.2: which candles backed this signal (0 cache hits = FRESH_API,
-+  // 1-2 = CACHE_PARTIAL, 3 = CACHE_ALL). Present on the response body.
-+  entrySource?: string;
-   dataStatus?: Record<string, string>;
-+  // Backend v6.9.2 per-pair circuit breaker. Present only while a pair is in
-+  // cooldown; the signal is forced to NO_TRADE but still recorded as a shadow
-+  // row server-side, so `wouldBeSignal` carries the suppressed direction.
-+  circuitBreaker?: {
-+    tripped: boolean;
-+    cooldownUntil: string;
-+    lossStreak?: number;
-+    wouldBeSignal?: string;
-+    cbShadow?: boolean;
-+  };
- }
- 
- export interface HistoryItem {
-@@ -202,3 +217,11 @@ export interface SignalStats {
-   total: number;
-   winRate: number;
- }
-+
-+export interface WorkerHealth {
-+  status?: string;
-+  version?: string;
-+  apiKeysLoaded?: number;
-+  quotaUsedToday?: number;
-+  rotationIdx?: number;
-+}
-diff --git a/src/utils/signalMeta.ts b/src/utils/signalMeta.ts
+diff --git a/src/utils/serverWr.ts b/src/utils/serverWr.ts
 new file mode 100644
-index 0000000..3f8e459
+index 0000000..b259e7d
 --- /dev/null
-+++ b/src/utils/signalMeta.ts
-@@ -0,0 +1,157 @@
++++ b/src/utils/serverWr.ts
+@@ -0,0 +1,233 @@
 +/**
-+ * Pure helpers for backend v6.9.2 metadata (B5 diagnostic fields, worker
-+ * history reconciliation, unsupported-symbol filtering).
++ * Server Win Rate filtering — pure logic (Phase 6).
 + *
-+ * These live outside App.tsx purely so they can be exercised by
-+ * `scripts/phase5_smoke.mjs` without a DOM or a React renderer — no component
-+ * was moved and App.tsx remains one file.
++ * Kept out of App.tsx so the aggregation and date-window maths can be tested
++ * without a DOM (see `scripts/phase6_smoke.mjs`). No component was moved;
++ * App.tsx remains a single file.
++ *
++ * ── Data-coverage caveat, verified live 2026-07-29 ──────────────────────────
++ * The worker keeps only MAX_SIGNALS_PER_PAIR = 50 history rows per pair and
++ * `/api/history` supports no pagination (`offset`/`cursor`/`page` are ignored;
++ * `limit` is capped at 50). So a windowed count derived from history is exact
++ * only when the pair's oldest retained row predates the window cutoff.
++ * For a busy pair (BTC/USD retains ~24h) a "Last 7 Days" figure is a LOWER
++ * BOUND. `computeCoverage()` detects this and the UI labels it, rather than
++ * printing a truncated number as if it were the truth.
 + */
 +
-+import { SignalData } from '../types';
++import { extractHistoryRecords, WorkerHistoryRecord } from './signalMeta';
 +
-+// ── unsupported symbols ────────────────────────────────────────────────
-+// Gold/silver/oil were never implemented worker-side: /api/signal?pair=xauusd
-+// answers `{"error":true,"message":"Invalid pair..."}`. Anything still stored
-+// in a user's localStorage favourites from an older build is filtered on load.
-+export const UNSUPPORTED_PREFIXES = ['XAU', 'XAG', 'WTI', 'XPT', 'XPD'];
++export type PairScope = 'all' | 'selected';
++export type TimeRange = 'all' | 'today' | '7d';
 +
-+export function isSupportedPair(pair: unknown): pair is string {
-+  if (typeof pair !== 'string' || pair.length === 0) return false;
-+  const upper = pair.toUpperCase();
-+  return !UNSUPPORTED_PREFIXES.some(prefix => upper.startsWith(prefix));
++export interface ServerWrFilter {
++  pairScope: PairScope;
++  timeRange: TimeRange;
 +}
 +
-+// ── B5: entry source ───────────────────────────────────────────────────
-+export const ENTRY_SOURCE_LABEL: Record<string, string> = {
-+  FRESH_API: 'Fresh data',
-+  CACHE_PARTIAL: 'Partly cached',
-+  CACHE_ALL: 'Cached data',
++export const DEFAULT_SERVER_WR_FILTER: ServerWrFilter = {
++  pairScope: 'selected',
++  timeRange: 'all',
 +};
 +
-+// ── B5: AI status ──────────────────────────────────────────────────────
++export const SERVER_WR_FILTER_KEY = 'ftt_server_wr_filter';
++
++const PAIR_SCOPES: PairScope[] = ['all', 'selected'];
++const TIME_RANGES: TimeRange[] = ['all', 'today', '7d'];
++
++/** Parse persisted filter defensively — a hand-edited or stale value must not crash the tab. */
++export function parseServerWrFilter(raw: unknown): ServerWrFilter {
++  let value: unknown = raw;
++  if (typeof raw === 'string') {
++    try { value = JSON.parse(raw); } catch { return { ...DEFAULT_SERVER_WR_FILTER }; }
++  }
++  if (!value || typeof value !== 'object') return { ...DEFAULT_SERVER_WR_FILTER };
++  const v = value as Partial<ServerWrFilter>;
++  return {
++    pairScope: PAIR_SCOPES.includes(v.pairScope as PairScope)
++      ? (v.pairScope as PairScope) : DEFAULT_SERVER_WR_FILTER.pairScope,
++    timeRange: TIME_RANGES.includes(v.timeRange as TimeRange)
++      ? (v.timeRange as TimeRange) : DEFAULT_SERVER_WR_FILTER.timeRange,
++  };
++}
++
++export function sameFilter(a?: ServerWrFilter | null, b?: ServerWrFilter | null): boolean {
++  if (!a || !b) return false;
++  return a.pairScope === b.pairScope && a.timeRange === b.timeRange;
++}
++
++export function filterCacheKey(filter: ServerWrFilter, selectedPair: string): string {
++  // selected-pair scope is pair-specific; "all" scope is not
++  return filter.pairScope === 'selected'
++    ? `selected:${selectedPair}:${filter.timeRange}`
++    : `all:${filter.timeRange}`;
++}
++
 +/**
-+ * Normalise the AI outcome into one short token, mirroring the worker's own
-+ * derivedAiStatus(): forex/crypto go through the dual-AI combiner (which
-+ * reports an `agreement`), OTC has a single validation with its own status.
++ * Start of the window, in epoch ms. `today` uses LOCAL midnight (the user's
++ * day, not UTC's) — deliberate: "Today" should mean today where the user is.
 + */
-+export function deriveAiStatus(data: SignalData): string | undefined {
-+  const ai = data.signal?.aiValidation;
-+  if (!ai) return undefined;
-+  if (ai.status === 'SKIPPED') return 'SKIPPED';
-+  const combined = ai.combined;
-+  if (!combined) {
-+    if (ai.status === 'OK') return ai.agrees ? 'OTC_AGREE' : 'OTC_DISAGREE';
-+    return ai.status || undefined;
++export function windowCutoff(timeRange: TimeRange, now: number = Date.now()): number {
++  if (timeRange === 'today') {
++    const d = new Date(now);
++    d.setHours(0, 0, 0, 0);
++    return d.getTime();
 +  }
-+  if (combined.status === 'OK' && combined.agreement) return combined.agreement;
-+  return combined.status || undefined;
++  if (timeRange === '7d') return now - 7 * 24 * 60 * 60 * 1000;
++  return 0;
 +}
 +
-+export interface AiBadge { label: string; className: string; }
++export const TIME_RANGE_LABEL: Record<TimeRange, string> = {
++  all: 'All time',
++  today: 'Today',
++  '7d': 'Last 7 days',
++};
 +
-+/** Badge for a normalised aiStatus token, or null when not worth showing. */
-+export function aiStatusBadge(status?: string): AiBadge | null {
-+  switch (status) {
-+    case 'BOTH_AGREE':
-+      return { label: '✓ AI Consensus', className: 'bg-[#81c784]/15 text-[#81c784]' };
-+    case 'OTC_AGREE':
-+    case 'OK':
-+      return { label: '✓ AI OK', className: 'bg-[#81c784]/15 text-[#81c784]' };
-+    case 'AIs_DISAGREE':
-+      return { label: '⚠ AI Split', className: 'bg-[#ffb74d]/15 text-[#ffb74d]' };
-+    case 'OTC_DISAGREE':
-+      return { label: '⚠ AI Disagrees', className: 'bg-[#ffb74d]/15 text-[#ffb74d]' };
-+    case 'BOTH_UNAVAILABLE':
-+      return { label: 'AI Offline', className: 'bg-[#bdbdbd]/15 text-[#bdbdbd]' };
-+    case 'SKIPPED':
-+    default:
-+      return null;
++/** Card subtitle for the active filter (spec §4.3). */
++export function filterSubtitle(filter: ServerWrFilter, selectedPair: string): string {
++  const scope = filter.pairScope === 'all' ? 'All pairs' : selectedPair;
++  if (filter.pairScope === 'selected' && filter.timeRange === 'all') {
++    return `All users · ${selectedPair}`;   // preserve the existing wording
 +  }
++  return `${scope} · ${TIME_RANGE_LABEL[filter.timeRange]}`;
 +}
 +
-+// ── worker history reconciliation ──────────────────────────────────────
++// ── /api/stats aggregation ─────────────────────────────────────────────
++export interface StatsPairRow {
++  pair: string;
++  wins?: number;
++  losses?: number;
++  totalSignals?: number;
++  winRate?: number;
++  lastUpdated?: string;
++}
++
++export interface AggregateResult {
++  totalWins: number;
++  totalLosses: number;
++  totalSignals: number;   // decided count (wins + losses)
++  winRate: number;        // 0..1
++  pairCount: number;
++  lastUpdated?: string;
++}
++
 +/**
-+ * One row of GET /api/history.
++ * All Pairs + All Time, from `/api/stats` (no pair).
 + *
-+ * IMPORTANT: that endpoint returns an OBJECT — `{ pair, total, showing,
-+ * decided, pending, winRate, signals: [...] }` — not a bare array. Treating the
-+ * payload as an array yields zero matches and fails silently, which is exactly
-+ * how the old client-side auto-checker would have "worked".
++ * WR denominator is wins+losses (decided only), per the spec's "prefer
++ * decided-only for WR honesty". Note: live data shows totalSignals ALWAYS
++ * equals wins+losses for every pair, i.e. the worker's `totalSignals` counter
++ * is only incremented for decided results — UNKNOWN never lands in stats at
++ * all (updatePairStats early-returns on UNKNOWN). So the two are identical
++ * today; using wins+losses keeps that true even if the worker changes.
 + */
-+export interface WorkerHistoryRecord {
-+  id: string;
-+  result?: string | null;      // 'WIN' | 'LOSS' | 'UNKNOWN' | null
-+  exitPrice?: number | null;
-+  structureVerdict?: string;
-+  aiStatus?: string;
-+  coreConfidence?: number;
-+  entrySource?: string;
-+}
++export function aggregateAllPairs(pairs: StatsPairRow[]): AggregateResult {
++  let totalWins = 0;
++  let totalLosses = 0;
++  let latest: number | null = null;
++  let pairCount = 0;
 +
-+/**
-+ * Minimal shape reconcileHistory needs. Deliberately NOT an index-signature
-+ * type: App's HistoryEntry has narrower literal unions (result, reportStatus)
-+ * and must survive the round trip with its own type intact.
-+ */
-+export interface ReconcilableEntry {
-+  id: string;
-+  result?: 'WIN' | 'LOSS' | 'PENDING';
-+  autoChecked?: boolean;
-+  reportStatus?: 'syncing' | 'synced' | 'failed';
-+  reportError?: string;
-+  structureVerdict?: string;
-+  aiStatus?: string;
-+  coreConfidence?: number;
-+  entrySource?: string;
-+}
-+
-+/** Safely pull the rows out of an /api/history payload of unknown shape. */
-+export function extractHistoryRecords(payload: unknown): WorkerHistoryRecord[] {
-+  if (Array.isArray(payload)) return payload as WorkerHistoryRecord[];
-+  if (payload && typeof payload === 'object') {
-+    const signals = (payload as { signals?: unknown }).signals;
-+    if (Array.isArray(signals)) return signals as WorkerHistoryRecord[];
++  for (const p of pairs) {
++    const w = Number(p?.wins) || 0;
++    const l = Number(p?.losses) || 0;
++    totalWins += w;
++    totalLosses += l;
++    if (w + l > 0) pairCount++;
++    if (p?.lastUpdated) {
++      const t = new Date(p.lastUpdated).getTime();
++      if (!Number.isNaN(t) && (latest === null || t > latest)) latest = t;
++    }
 +  }
-+  return [];
++
++  const decided = totalWins + totalLosses;
++  return {
++    totalWins,
++    totalLosses,
++    totalSignals: decided,
++    winRate: decided > 0 ? totalWins / decided : 0,
++    pairCount,
++    lastUpdated: latest !== null ? new Date(latest).toISOString() : undefined,
++  };
++}
++
++// ── history-derived windowed counts ────────────────────────────────────
++export interface WindowedCount {
++  wins: number;
++  losses: number;
++  decided: number;
++  recordsConsidered: number;
++  /** false when the 50-row cap may hide older rows inside the window. */
++  complete: boolean;
 +}
 +
 +/**
-+ * Apply worker-resolved outcomes onto local history.
++ * Count decided results at or after `cutoff` in one pair's history payload.
 + *
-+ * Rules:
-+ *  - never overwrite an already-decided local entry (manual report wins)
-+ *  - only WIN/LOSS are applied; UNKNOWN means the worker gave up, so the row
-+ *    stays PENDING and the user can still report it by hand
-+ *  - B5 diagnostics are backfilled without clobbering values already present
-+ *  - returns the SAME array reference when nothing changed, so React can skip
-+ *    the re-render
++ * `complete` is false when the response is at the 50-row cap AND the oldest
++ * retained row is itself newer than the cutoff — meaning rows inside the
++ * window have already been evicted, so the count is a lower bound.
 + */
-+export function reconcileHistory<T extends ReconcilableEntry>(
-+  local: T[],
-+  records: WorkerHistoryRecord[],
-+): T[] {
-+  if (records.length === 0) return local;
-+  const byId = new Map(records.map(r => [r.id, r]));
-+  let changed = false;
++export function countWindowed(payload: unknown, cutoff: number): WindowedCount {
++  const records = extractHistoryRecords(payload) as Array<WorkerHistoryRecord & { timestamp?: string }>;
++  let wins = 0;
++  let losses = 0;
++  let considered = 0;
++  let oldest: number | null = null;
 +
-+  const next = local.map(entry => {
-+    if (entry.result && entry.result !== 'PENDING') return entry;
-+    const worker = byId.get(entry.id);
-+    if (!worker) return entry;
-+    if (worker.result !== 'WIN' && worker.result !== 'LOSS') return entry;
-+    changed = true;
-+    return {
-+      ...entry,
-+      result: worker.result as 'WIN' | 'LOSS',
-+      autoChecked: true,
-+      reportStatus: 'synced' as const,
-+      reportError: undefined,
-+      structureVerdict: entry.structureVerdict ?? worker.structureVerdict,
-+      aiStatus: entry.aiStatus ?? worker.aiStatus,
-+      coreConfidence: entry.coreConfidence ?? worker.coreConfidence,
-+      entrySource: entry.entrySource ?? worker.entrySource,
-+    } as T;
-+  });
++  for (const r of records) {
++    const ts = r?.timestamp ? new Date(r.timestamp).getTime() : NaN;
++    if (!Number.isNaN(ts)) {
++      if (oldest === null || ts < oldest) oldest = ts;
++    }
++    if (Number.isNaN(ts) || ts < cutoff) continue;
++    considered++;
++    if (r.result === 'WIN') wins++;
++    else if (r.result === 'LOSS') losses++;
++  }
 +
-+  return changed ? next : local;
++  const atCap = records.length >= HISTORY_ROW_CAP;
++  const complete = cutoff === 0
++    ? !atCap                                   // "all time" is only exact below the cap
++    : !(atCap && oldest !== null && oldest > cutoff);
++
++  return { wins, losses, decided: wins + losses, recordsConsidered: considered, complete };
++}
++
++/** Worker-side MAX_SIGNALS_PER_PAIR; /api/history cannot return more than this. */
++export const HISTORY_ROW_CAP = 50;
++
++export interface CoverageSummary {
++  complete: boolean;
++  truncatedPairs: string[];
++}
++
++/** Merge per-pair windowed counts into one aggregate plus a coverage verdict. */
++export function combineWindowed(
++  entries: Array<{ pair: string; count: WindowedCount | null }>,
++): AggregateResult & { coverage: CoverageSummary; recordsConsidered: number } {
++  let totalWins = 0;
++  let totalLosses = 0;
++  let recordsConsidered = 0;
++  let pairCount = 0;
++  const truncatedPairs: string[] = [];
++
++  for (const { pair, count } of entries) {
++    if (!count) continue;
++    totalWins += count.wins;
++    totalLosses += count.losses;
++    recordsConsidered += count.recordsConsidered;
++    if (!count.complete) truncatedPairs.push(pair);
++    if (count.decided > 0) pairCount++;
++  }
++
++  const decided = totalWins + totalLosses;
++  return {
++    totalWins,
++    totalLosses,
++    totalSignals: decided,
++    winRate: decided > 0 ? totalWins / decided : 0,
++    pairCount,
++    recordsConsidered,
++    coverage: { complete: truncatedPairs.length === 0, truncatedPairs },
++  };
 +}

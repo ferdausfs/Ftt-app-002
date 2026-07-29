@@ -35,6 +35,13 @@ import {
   deriveAiStatus, aiStatusBadge, isSupportedPair, ENTRY_SOURCE_LABEL,
   extractHistoryRecords, reconcileHistory,
 } from './utils/signalMeta';
+import { FilterChipRow } from './components/FilterChipRow';
+import {
+  ServerWrFilter, DEFAULT_SERVER_WR_FILTER, SERVER_WR_FILTER_KEY,
+  parseServerWrFilter, sameFilter, windowCutoff, filterSubtitle, filterCacheKey,
+  aggregateAllPairs, countWindowed, combineWindowed, TIME_RANGE_LABEL,
+  PairScope, TimeRange, StatsPairRow, CoverageSummary,
+} from './utils/serverWr';
 
 interface HistoryEntry {
   id: string;
@@ -82,16 +89,43 @@ interface ServerPairStats {
   dynamicConfidenceAdjustment?: number;
 }
 
+/** Aggregate (All Pairs) or windowed (Today / 7d) result — not a single-pair payload. */
+interface ServerAggregateStats {
+  isAggregate: true;
+  scope: PairScope;
+  window: TimeRange;
+  totalWins: number;
+  totalLosses: number;
+  totalSignals: number;          // decided count (wins + losses)
+  winRate: number;               // 0..1
+  pairCount?: number;
+  recordsConsidered?: number;    // history rows inside the window
+  coverage?: CoverageSummary;    // 50-row cap may hide older rows
+  lastUpdated?: string;
+}
+
+function isAggregateStats(s: ServerPairStats | ServerAggregateStats | null): s is ServerAggregateStats {
+  return !!s && (s as ServerAggregateStats).isAggregate === true;
+}
+
 interface ServerStatsState {
   pair: string;
+  filter: ServerWrFilter;
   loading: boolean;
-  stats: ServerPairStats | null;
+  stats: ServerPairStats | ServerAggregateStats | null;
   message?: string;
+  /** set when the All Pairs view failed and we fell back to the selected pair */
+  fallbackNote?: string;
+  /** true when the user can retry (e.g. most parallel fetches failed) */
+  retryable?: boolean;
 }
 
 type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner';
 
 const DEFAULT_FAVORITES = ['EUR/USD', 'GBP/USD', 'BTC/USD'];
+
+/** Spec §3.4: memoise a computed Server-WR view for this long. */
+const SERVER_WR_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export default function App() {
   const [selectedPair, setSelectedPair] = useState(() => {
@@ -137,6 +171,19 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshCountdown, setRefreshCountdown] = useState(60);
   const [serverStatsState, setServerStatsState] = useState<ServerStatsState | null>(null);
+  const [serverWrFilter, setServerWrFilter] = useState<ServerWrFilter>(() => {
+    try {
+      const saved = localStorage.getItem(SERVER_WR_FILTER_KEY);
+      return saved ? parseServerWrFilter(saved) : { ...DEFAULT_SERVER_WR_FILTER };
+    } catch { return { ...DEFAULT_SERVER_WR_FILTER }; }
+  });
+  // Manual retry: bumping this re-runs the server-stats effect.
+  const [serverWrReloadKey, setServerWrReloadKey] = useState(0);
+  // Spec §3.4 throttle: memoise each computed view for 5 min so re-entering the
+  // History tab does not repeat the ~13-request fan-out. Keyed by
+  // (scope, pair, window); a manual retry bypasses it.
+  const serverWrCacheRef = useRef<Map<string, { at: number; state: ServerStatsState }>>(new Map());
+  const lastServerWrReloadRef = useRef(0);
 
   const historyRef = useRef<HistoryEntry[]>(history);
   historyRef.current = history;
@@ -263,6 +310,10 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem('ftt_history', JSON.stringify(history)); } catch {}
   }, [history]);
+
+  useEffect(() => {
+    try { localStorage.setItem(SERVER_WR_FILTER_KEY, JSON.stringify(serverWrFilter)); } catch {}
+  }, [serverWrFilter]);
 
   // BUG #6 fix: clear the previous pair's signal before fetching the new one.
   // Without this the old pair's card stayed on screen for the whole 5-8s fetch,
@@ -423,51 +474,215 @@ export default function App() {
     };
   }, [activeTab]);
 
+  // ── Server Win Rate, filtered (Phase 6) ────────────────────────────────
+  // Four routes, chosen by (pairScope, timeRange):
+  //   selected + all   -> /api/stats?pair=X          (unchanged Phase 2 path)
+  //   all      + all   -> /api/stats                 (aggregate wins/losses)
+  //   selected + win   -> /api/history?pair=X        (count inside the window)
+  //   all      + win   -> /api/stats then /api/history per pair, in parallel
+  //
+  // Windowed routes derive from history, which the worker caps at 50 rows per
+  // pair with no pagination — so those counts can be a lower bound. Coverage is
+  // tracked and surfaced rather than silently rounded off.
   useEffect(() => {
     if (activeTab !== 'history') return;
 
     let cancelled = false;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    // Windowed All-Pairs fans out to ~13 requests; give it more room than the
+    // single-request paths but still bail rather than hang the tab.
+    const budgetMs = serverWrFilter.pairScope === 'all' && serverWrFilter.timeRange !== 'all' ? 20000 : 10000;
+    const timeoutId = setTimeout(() => controller.abort(), budgetMs);
+
+    const cacheKey = filterCacheKey(serverWrFilter, selectedPair);
+    const cached = serverWrCacheRef.current.get(cacheKey);
+    const cacheFresh = cached && Date.now() - cached.at < SERVER_WR_CACHE_TTL_MS;
+    if (cacheFresh && serverWrReloadKey === lastServerWrReloadRef.current) {
+      setServerStatsState(cached.state);
+      clearTimeout(timeoutId);
+      return () => { cancelled = true; controller.abort(); clearTimeout(timeoutId); };
+    }
+    lastServerWrReloadRef.current = serverWrReloadKey;
 
     setServerStatsState(prev => ({
       pair: selectedPair,
+      filter: serverWrFilter,
       loading: true,
-      stats: prev?.pair === selectedPair ? prev.stats : null,
-      message: prev?.pair === selectedPair ? prev.message : undefined,
+      // keep the previous numbers visible while refetching the SAME view;
+      // clear them when the view changed, so stale figures never sit under a
+      // heading that now says something else
+      stats: prev && sameFilter(prev.filter, serverWrFilter) && prev.pair === selectedPair ? prev.stats : null,
+      message: undefined,
     }));
 
-    const fetchServerStats = async () => {
-      try {
-        const cleanPair = selectedPair.replace(/\//g, '').toLowerCase();
-        const response = await fetch(`${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair)}`, { signal: controller.signal });
-        if (!response.ok) throw new Error('stats');
-        const payload: { pair?: string; stats?: ServerPairStats | null; message?: string } = await response.json();
-        if (cancelled) return;
-        setServerStatsState({
-          pair: payload.pair || selectedPair,
-          loading: false,
-          stats: payload.stats || null,
-          message: payload.message,
-        });
-      } catch (e) {
-        if (!cancelled) {
-          console.warn('Server stats fetch failed; hiding section.', { pair: selectedPair, error: e });
-          setServerStatsState(null);
-        }
-      } finally {
-        clearTimeout(timeoutId);
-      }
+    // Cache only successful computations — errors must stay retryable.
+    const publish = (next: ServerStatsState) => {
+      if (next.stats) serverWrCacheRef.current.set(cacheKey, { at: Date.now(), state: next });
+      setServerStatsState(next);
     };
 
-    fetchServerStats();
+    const getJson = async (url: string) => {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error('http ' + res.status);
+      return res.json();
+    };
+
+    const cleanPair = (pair: string) => pair.replace(/\//g, '').toLowerCase();
+
+    const fetchPairList = async (): Promise<StatsPairRow[]> => {
+      const payload = await getJson(`${API_BASE}/api/stats`);
+      const pairs = Array.isArray(payload?.pairs) ? (payload.pairs as StatsPairRow[]) : [];
+      return pairs.filter(p => p && typeof p.pair === 'string' && isSupportedPair(p.pair));
+    };
+
+    const compute = async () => {
+      const { pairScope, timeRange } = serverWrFilter;
+      const cutoff = windowCutoff(timeRange);
+
+      // ── selected + all time: the original endpoint ──
+      if (pairScope === 'selected' && timeRange === 'all') {
+        const payload = await getJson(`${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair(selectedPair))}`);
+        if (cancelled) return;
+        publish({
+          pair: payload?.pair || selectedPair,
+          filter: serverWrFilter,
+          loading: false,
+          stats: payload?.stats || null,
+          message: payload?.message,
+        });
+        return;
+      }
+
+      // ── all pairs + all time: aggregate the stats index ──
+      if (pairScope === 'all' && timeRange === 'all') {
+        const pairs = await fetchPairList();
+        if (cancelled) return;
+        const agg = aggregateAllPairs(pairs);
+        publish({
+          pair: selectedPair,
+          filter: serverWrFilter,
+          loading: false,
+          stats: {
+            isAggregate: true, scope: 'all', window: 'all',
+            totalWins: agg.totalWins, totalLosses: agg.totalLosses,
+            totalSignals: agg.totalSignals, winRate: agg.winRate,
+            pairCount: agg.pairCount,
+            lastUpdated: agg.lastUpdated,
+            // /api/stats counters are lifetime and authoritative — no cap issue
+            coverage: { complete: true, truncatedPairs: [] },
+          },
+          message: agg.totalSignals === 0 ? 'No decided signals yet.' : undefined,
+        });
+        return;
+      }
+
+      // ── selected pair + window: one history call ──
+      if (pairScope === 'selected') {
+        const payload = await getJson(
+          `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(selectedPair))}&limit=50`);
+        if (cancelled) return;
+        const count = countWindowed(payload, cutoff);
+        publish({
+          pair: selectedPair,
+          filter: serverWrFilter,
+          loading: false,
+          stats: {
+            isAggregate: true, scope: 'selected', window: timeRange,
+            totalWins: count.wins, totalLosses: count.losses,
+            totalSignals: count.decided,
+            winRate: count.decided > 0 ? count.wins / count.decided : 0,
+            recordsConsidered: count.recordsConsidered,
+            coverage: { complete: count.complete, truncatedPairs: count.complete ? [] : [selectedPair] },
+          },
+          message: count.decided === 0
+            ? `No decided signals for ${selectedPair} in this window.` : undefined,
+        });
+        return;
+      }
+
+      // ── all pairs + window: fan out ──
+      const pairs = await fetchPairList();
+      if (cancelled) return;
+      if (pairs.length === 0) throw new Error('no pairs');
+
+      const settled = await Promise.all(pairs.map(async p => {
+        try {
+          const payload = await getJson(
+            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(p.pair))}&limit=50`);
+          return { pair: p.pair, count: countWindowed(payload, cutoff) };
+        } catch {
+          return { pair: p.pair, count: null };
+        }
+      }));
+      if (cancelled) return;
+
+      const failed = settled.filter(r => r.count === null).length;
+      // Spec: if half or more of the fan-out fails the number is not worth
+      // showing — offer a retry instead of a confidently wrong figure.
+      if (failed >= Math.ceil(pairs.length / 2)) {
+        setServerStatsState({
+          pair: selectedPair, filter: serverWrFilter, loading: false, stats: null,
+          message: `Insufficient data — ${failed} of ${pairs.length} pair requests failed.`,
+          retryable: true,
+        });
+        return;
+      }
+
+      const combined = combineWindowed(settled);
+      publish({
+        pair: selectedPair,
+        filter: serverWrFilter,
+        loading: false,
+        stats: {
+          isAggregate: true, scope: 'all', window: timeRange,
+          totalWins: combined.totalWins, totalLosses: combined.totalLosses,
+          totalSignals: combined.totalSignals, winRate: combined.winRate,
+          pairCount: combined.pairCount,
+          recordsConsidered: combined.recordsConsidered,
+          coverage: combined.coverage,
+        },
+        message: combined.totalSignals === 0
+          ? `No decided signals across any pair in this window.` : undefined,
+        retryable: failed > 0 ? true : undefined,
+      });
+    };
+
+    compute().catch(async (e) => {
+      if (cancelled || e?.name === 'AbortError') return;
+      console.warn('Server win-rate fetch failed.', { filter: serverWrFilter, pair: selectedPair, error: e });
+
+      // Spec §4.6: if the All Pairs view is unavailable, degrade to the
+      // selected pair rather than showing an empty card.
+      if (serverWrFilter.pairScope === 'all') {
+        try {
+          const payload = await getJson(
+            `${API_BASE}/api/stats?pair=${encodeURIComponent(cleanPair(selectedPair))}`);
+          if (cancelled) return;
+          setServerStatsState({
+            pair: payload?.pair || selectedPair,
+            filter: { pairScope: 'selected', timeRange: 'all' },
+            loading: false,
+            stats: payload?.stats || null,
+            fallbackNote: 'All Pairs view unavailable — showing selected pair.',
+            retryable: true,
+          });
+          return;
+        } catch { /* fall through */ }
+      }
+      if (!cancelled) {
+        setServerStatsState({
+          pair: selectedPair, filter: serverWrFilter, loading: false, stats: null,
+          message: 'Server stats unavailable.', retryable: true,
+        });
+      }
+    }).finally(() => clearTimeout(timeoutId));
 
     return () => {
       cancelled = true;
       controller.abort();
       clearTimeout(timeoutId);
     };
-  }, [activeTab, selectedPair]);
+  }, [activeTab, selectedPair, serverWrFilter, serverWrReloadKey]);
 
   const pendingCount = history.filter(h => !h.result || h.result === 'PENDING').length;
   const wins = history.filter(h => h.result === 'WIN').length;
@@ -821,7 +1036,33 @@ export default function App() {
               <StatCard label="Win %" value={`${winRate}%`} color="#ffb74d" />
             </div>
 
-            <ServerStatsCard state={serverStatsState} selectedPair={selectedPair} />
+            <div className="space-y-2 mb-3">
+              <FilterChipRow
+                label="Pair:"
+                chips={[
+                  { id: 'all', label: 'All Pairs' },
+                  { id: 'selected', label: selectedPair },
+                ]}
+                selectedId={serverWrFilter.pairScope}
+                onSelect={(id) => setServerWrFilter(prev => ({ ...prev, pairScope: id as PairScope }))}
+              />
+              <FilterChipRow
+                label="Time:"
+                chips={[
+                  { id: 'all', label: 'All Time' },
+                  { id: 'today', label: 'Today' },
+                  { id: '7d', label: 'Last 7 Days' },
+                ]}
+                selectedId={serverWrFilter.timeRange}
+                onSelect={(id) => setServerWrFilter(prev => ({ ...prev, timeRange: id as TimeRange }))}
+              />
+            </div>
+
+            <ServerStatsCard
+              state={serverStatsState}
+              selectedPair={selectedPair}
+              onRetry={() => setServerWrReloadKey(k => k + 1)}
+            />
 
             {/* List */}
             <div className="md-surface overflow-hidden">
@@ -1011,15 +1252,35 @@ function formatServerWinRate(value?: number) {
   return `${pct.toFixed(1)}%`;
 }
 
-function ServerStatsCard({ state, selectedPair }: { state: ServerStatsState | null; selectedPair: string }) {
+function ServerStatsCard({ state, selectedPair, onRetry }: {
+  state: ServerStatsState | null;
+  selectedPair: string;
+  onRetry?: () => void;
+}) {
   if (!state) return null;
 
   const stats = state.stats;
   const hasStats = !!stats;
-  const lastUpdated = stats?.lastUpdated ? new Date(stats.lastUpdated) : null;
+  const aggregate = isAggregateStats(stats) ? stats : null;
+  const pairStats = !aggregate && stats ? (stats as ServerPairStats) : null;
+
+  const wins = aggregate ? aggregate.totalWins : (pairStats?.wins ?? 0);
+  const losses = aggregate ? aggregate.totalLosses : (pairStats?.losses ?? 0);
+  const signals = aggregate ? aggregate.totalSignals : pairStats?.totalSignals;
+  const winRate = aggregate ? aggregate.winRate : pairStats?.winRate;
+
+  const lastUpdatedRaw = aggregate ? aggregate.lastUpdated : pairStats?.lastUpdated;
+  const lastUpdated = lastUpdatedRaw ? new Date(lastUpdatedRaw) : null;
   const lastUpdatedLabel = lastUpdated && !Number.isNaN(lastUpdated.getTime())
     ? lastUpdated.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : null;
+
+  const subtitle = filterSubtitle(state.filter, state.pair || selectedPair);
+  const windowed = state.filter.timeRange !== 'all';
+  // Confidence adjustment is a lifetime per-pair number — meaningless once the
+  // view is aggregated or windowed, so it is only shown on the original path.
+  const showConfidenceAdj = !windowed && state.filter.pairScope === 'selected' && pairStats;
+  const truncated = aggregate?.coverage && !aggregate.coverage.complete;
 
   return (
     <div className="md-surface p-4 mb-4 border border-[#42a5f5]/10">
@@ -1030,45 +1291,86 @@ function ServerStatsCard({ state, selectedPair }: { state: ServerStatsState | nu
           </div>
           <div>
             <div className="text-sm font-medium">Server Win Rate</div>
-            <div className="text-xs text-[#8e9099]">All users · {state.pair || selectedPair}</div>
+            <div className="text-xs text-[#8e9099]">{subtitle}</div>
           </div>
         </div>
         {state.loading && <RefreshCw className="w-4 h-4 text-[#42a5f5] animate-spin" />}
       </div>
 
+      {state.fallbackNote && (
+        <div className="mb-3 rounded-xl bg-[#ffb74d]/10 border border-[#ffb74d]/20 px-3 py-2 text-[11px] text-[#ffb74d]">
+          {state.fallbackNote}
+        </div>
+      )}
+
       {state.loading && !hasStats ? (
-        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8]">Loading server stats…</div>
+        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8] flex items-center gap-2">
+          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+          {state.filter.pairScope === 'all' && windowed
+            ? 'Computing across all pairs…'
+            : 'Loading server stats…'}
+        </div>
       ) : hasStats ? (
         <>
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-[#1e1e23] rounded-xl p-3">
               <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">Server Win %</div>
-              <div className="text-lg font-medium number-tabular text-[#4dd0e1]">{formatServerWinRate(stats.winRate)}</div>
+              <div className="text-lg font-medium number-tabular text-[#4dd0e1]">{formatServerWinRate(winRate)}</div>
             </div>
             <div className="bg-[#1e1e23] rounded-xl p-3">
-              <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">Signals</div>
-              <div className="text-lg font-medium number-tabular">{stats.totalSignals ?? '—'}</div>
+              <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">{windowed ? 'Decided' : 'Signals'}</div>
+              <div className="text-lg font-medium number-tabular">{signals ?? '—'}</div>
             </div>
             <div className="bg-[#1e1e23] rounded-xl p-3">
               <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">W / L</div>
               <div className="text-lg font-medium number-tabular">
-                <span className="text-[#81c784]">{stats.wins ?? 0}</span>
+                <span className="text-[#81c784]">{wins}</span>
                 <span className="text-[#6e6e73]"> / </span>
-                <span className="text-[#ef5350]">{stats.losses ?? 0}</span>
+                <span className="text-[#ef5350]">{losses}</span>
               </div>
             </div>
           </div>
+
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-[#6e6e73]">
-            {typeof stats.sampleSize === 'number' && <span>Lookback sample: {stats.sampleSize}</span>}
-            {typeof stats.dynamicConfidenceAdjustment === 'number' && (
-              <span>· Confidence adj: {stats.dynamicConfidenceAdjustment > 0 ? '+' : ''}{stats.dynamicConfidenceAdjustment}</span>
+            {windowed && typeof aggregate?.recordsConsidered === 'number' && (
+              <span>Filtered from {aggregate.recordsConsidered} recent records · {TIME_RANGE_LABEL[state.filter.timeRange]}</span>
+            )}
+            {!windowed && aggregate && typeof aggregate.pairCount === 'number' && (
+              <span>{aggregate.pairCount} pairs contributing</span>
+            )}
+            {!windowed && pairStats && typeof pairStats.sampleSize === 'number' && (
+              <span>Lookback sample: {pairStats.sampleSize}</span>
+            )}
+            {showConfidenceAdj && typeof pairStats.dynamicConfidenceAdjustment === 'number' && (
+              <span>· Confidence adj: {pairStats.dynamicConfidenceAdjustment > 0 ? '+' : ''}{pairStats.dynamicConfidenceAdjustment}</span>
             )}
             {lastUpdatedLabel && <span>· Updated {lastUpdatedLabel}</span>}
           </div>
+
+          {truncated && (
+            <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#ffb74d]/10 border border-[#ffb74d]/20 px-3 py-2 text-[11px] text-[#ffb74d]">
+              <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+              <span>
+                At least {signals} — the server keeps only the 50 most recent signals per pair,
+                so older results inside this window are no longer retrievable
+                {aggregate?.coverage?.truncatedPairs?.length
+                  ? ` (${aggregate.coverage.truncatedPairs.slice(0, 3).join(', ')}${aggregate.coverage.truncatedPairs.length > 3 ? ` +${aggregate.coverage.truncatedPairs.length - 3} more` : ''})`
+                  : ''}.
+              </span>
+            </div>
+          )}
         </>
       ) : (
-        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8]">
-          {state.message || 'No server stats yet for this pair.'}
+        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8] flex items-center justify-between gap-3">
+          <span>{state.message || 'No server stats yet for this pair.'}</span>
+          {state.retryable && onRetry && (
+            <button
+              onClick={onRetry}
+              className="px-3 py-1.5 rounded-full bg-[#42a5f5]/15 text-[#42a5f5] text-[11px] font-medium active:scale-95 transition-transform whitespace-nowrap"
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
     </div>

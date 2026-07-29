@@ -1,5 +1,69 @@
 # AGENT_LOG
 
+## 2026-07-29 — Phase 6: Server Win Rate filters (pair scope + time range)
+
+### Scope
+- App-only. Base `28be83a`. Backend v6.9.2 untouched, nothing deployed/pushed.
+- 4 files: 2 modified, 2 new (+1 test script). 912 insertions / 37 deletions.
+
+### Two spec assumptions checked against live data first
+- **`totalSignals` does NOT include UNKNOWN** (spec §3.1 said it does). Verified on
+  all 13 pairs: `wins + losses == totalSignals` everywhere, because the worker's
+  `updatePairStats` early-returns on UNKNOWN. No practical difference today; kept
+  `wins + losses` as the WR denominator so it stays honest if that ever changes.
+- **`/api/history` retains only 50 rows per pair and has no pagination.**
+  `limit=100/200` still return 50; `offset`/`cursor`/`page`/`before` are all
+  ignored. For busy pairs 50 rows spans ~24h (BTC 23.8h, ETH 22.3h, BNB 24.8h),
+  so a "Last 7 Days" figure is unobtainable for 7 of 13 pairs — only 27% (185/683)
+  of all decided signals are reachable through history at all. Shipping the count
+  silently would have presented a truncated number as the truth.
+
+### Changes
+- `components/FilterChipRow.tsx` (new) — chip row per spec §4.1, plus `aria-pressed`
+  and a disabled state.
+- `utils/serverWr.ts` (new) — pure logic, testable without a DOM: defensive filter
+  parsing, local-midnight / 168h cutoffs, all-pairs aggregation, windowed counting,
+  and **coverage detection** (a pair at the 50-row cap whose oldest retained row is
+  newer than the cutoff is flagged incomplete).
+- `App.tsx` — four fetch routes keyed on (pairScope, timeRange):
+  selected+all → `/api/stats?pair=X` (unchanged Phase 2 path);
+  all+all → `/api/stats` aggregate; selected+window → one history call;
+  all+window → `/api/stats` then ~13 parallel history calls.
+  Adds a 5-minute per-view cache (spec §3.4) keyed by scope/pair/window that caches
+  only successful results and is bypassed by manual retry; a selected-pair fallback
+  when the All Pairs view fails; and a retry when ≥50% of the fan-out fails.
+- Card renders aggregate vs per-pair via an `isAggregateStats()` guard, with a
+  dynamic subtitle and an amber "At least N — server keeps only the 50 most recent
+  signals per pair" note whenever coverage is incomplete. Confidence-adj is hidden
+  outside the lifetime per-pair view, where it is the only meaningful reading.
+
+### Verification
+- build pass · `tsc --noEmit` 0 errors (it caught a real bug: I referenced
+  `state.filter.window`, a property that does not exist).
+- `scripts/phase6_smoke.mjs`: **79/79** — parsing, aggregation, cutoffs, payload
+  shapes (Phase 5 regression guard), cap detection, subtitles, cache TTL/retry
+  bypass, and six assertions that the Phase 5 fixes are still intact.
+- Live 4-route validation against the real backend: all+all matches an independent
+  recompute exactly (311W/372L, 45.5%); all+7d returns 79W/80L flagged incomplete
+  for 6 pairs. Fan-out measured at 40-300ms, not the 1-2s the spec assumed.
+- Chip row rendered with real React: 6/6. Screenshot in `verify/p6_ui.png`.
+
+### Budget miss (reported, not hidden)
+Bundle grew **+8.07 KB raw** against a <5 KB budget (gzip +2.62 KB, inside budget).
+Measured split: ~7.3 KB core feature, ~0.6 KB truncation warning, ~0.4 KB cache.
+Removed genuinely dead weight (`perPairBreakdown` was computed but never rendered,
+−309 B); did not cut the truncation warning, since dropping it would still leave
+7.7 KB and would make the feature dishonest.
+
+### Open
+- 7d truncation: shipped as a labelled lower bound. Alternatives are disabling the
+  chip for busy pairs, or a backend change (larger retention / windowed stats endpoint).
+- "All Time" comes from lifetime `/api/stats` counters while windows come from
+  capped history — same card, two different data qualities.
+- `src/types.ts` untouched: `ServerPairStats`/`ServerStatsState` live in App.tsx,
+  not types.ts (spec §6 assumed otherwise), so the new types went beside them.
+
+
 ## 2026-07-28 — Phase 5 app bug-fix round (6 bugs + B5 display + circuit breaker UI)
 
 ### Scope

@@ -1,44 +1,47 @@
-# Part 4 — grep verification
+# Part 9 — grep verification
 
-## 4.2 — fetch timeouts updated (no 15000 / 12000 left as abort budgets)
-$ grep -rn "15000\|12000" src/
-(0 hits)
+## 9.3 — filter state wired
+$ grep -rn "serverWrFilter" src/ | head -12
+src/App.tsx:174:  const [serverWrFilter, setServerWrFilter] = useState<ServerWrFilter>(() => {
+src/App.tsx:315:    try { localStorage.setItem(SERVER_WR_FILTER_KEY, JSON.stringify(serverWrFilter)); } catch {}
+src/App.tsx:316:  }, [serverWrFilter]);
+src/App.tsx:494:    const budgetMs = serverWrFilter.pairScope === 'all' && serverWrFilter.timeRange !== 'all' ? 20000 : 10000;
+src/App.tsx:497:    const cacheKey = filterCacheKey(serverWrFilter, selectedPair);
+src/App.tsx:509:      filter: serverWrFilter,
+src/App.tsx:514:      stats: prev && sameFilter(prev.filter, serverWrFilter) && prev.pair === selectedPair ? prev.stats : null,
+src/App.tsx:539:      const { pairScope, timeRange } = serverWrFilter;
+src/App.tsx:548:          filter: serverWrFilter,
+src/App.tsx:563:          filter: serverWrFilter,
+src/App.tsx:587:          filter: serverWrFilter,
+src/App.tsx:624:          pair: selectedPair, filter: serverWrFilter, loading: false, stats: null,
 
-$ grep -rn "controller.abort(), " src/    # the actual budgets now in place
-src/App.tsx:167:    const timeoutId = setTimeout(() => controller.abort(), 25000);
-src/App.tsx:391:        const timeoutId = setTimeout(() => controller.abort(), 10000);
-src/App.tsx:431:    const timeoutId = setTimeout(() => controller.abort(), 10000);
-src/components/HealthPill.tsx:22:      const timeoutId = setTimeout(() => controller.abort(), 8000);
-src/hooks/useScanner.ts:196:    const timeoutId = setTimeout(() => controller.abort(), 20000);
-src/hooks/useScanner.ts:220:    const timeoutId = setTimeout(() => controller.abort(), 20000);
+$ grep -rn "PairScope\|TimeRange" src/utils/serverWr.ts | head -4
+20:export type PairScope = 'all' | 'selected';
+21:export type TimeRange = 'all' | 'today' | '7d';
+24:  pairScope: PairScope;
+25:  timeRange: TimeRange;
 
-## 4.3 — XAU / XAG / WTI / Commodities removed
-$ grep -rn "XAU\|XAG\|WTI\|Commodities" src/
-src/App.tsx:108:      // XAU/USD dropped — backend rejects gold ("Invalid pair"). BTC/USD instead.
-src/components/PairSelector.tsx:14:// Commodities (XAU/XAG/WTI) intentionally absent — no backend support.
-src/hooks/useScanner.ts:32:// XAU/USD removed — the backend has no gold support and always answers
-src/utils/signalMeta.ts:16:export const UNSUPPORTED_PREFIXES = ['XAU', 'XAG', 'WTI', 'XPT', 'XPD'];
+## 9.4 — FilterChipRow used
+$ grep -rn "FilterChipRow" src/
+src/App.tsx:38:import { FilterChipRow } from './components/FilterChipRow';
+src/App.tsx:1040:              <FilterChipRow
+src/App.tsx:1049:              <FilterChipRow
+src/components/FilterChipRow.tsx:17:export function FilterChipRow({ chips, selectedId, onSelect, label, disabled }: Props) {
 
-  Remaining hits above are intentional and are NOT pair definitions:
-   - signalMeta.ts UNSUPPORTED_PREFIXES: the filter that strips a stale
-     XAU/USD favourite out of a returning user's localStorage.
-   - one-line comments recording why the group was removed.
-  No selectable XAU/XAG/WTI pair remains in any list:
-$ grep -rn "'XAU/USD'\|'XAG/USD'\|'WTI/USD'" src/
-(0 hits — no selectable commodity pair)
-
-## Part 7 — hard bans
+## Part 8 — hard bans
 $ grep -rn "vercel --prod\|git push\|vercel deploy" src/ scripts/
 (0 hits — nothing deployed, nothing pushed)
 
 $ git diff --stat package.json package-lock.json
-(empty = no new npm dependencies, as required)
+(empty = no new npm dependency)
 
-## Dead client-side auto-checker is gone (BUG #4)
-$ grep -rn "const entry = due\[0\]\|checkExpired" src/
-(0 hits — auto-checker removed)
+## Phase 5 fixes must survive untouched (Part 8)
+  App 25s signal timeout       1 hit(s)  OK
+  scanner 20s timeout          2 hit(s)  OK
+  CB card                      3 hit(s)  OK
+  health pill                  1 hit(s)  OK
+  history reconciliation       5 hit(s)  OK
+  XAU filter                   4 hit(s)  OK
 
-$ grep -rn "api/history" src/App.tsx    # replaced by worker reconciliation
-372:  // The app is a display layer now — it reconciles against `/api/history`
-395:            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair)}&limit=50`,
-400:          // /api/history returns an OBJECT ({ pair, total, signals: [...] }),
+$ grep -rn "'XAU/USD'" src/    # Phase 5 removal still holds
+(0 hits)
