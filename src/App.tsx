@@ -45,6 +45,7 @@ import {
 
 // Premium UI components (#1-7)
 import { ConfidenceGauge, ConfluenceBar, FilterBadges, SignalStrengthBars, DirectionPill } from './components/Premium';
+import { HistoryDetailModal } from './components/HistoryDetailModal';
 
 interface HistoryEntry {
   id: string;
@@ -63,6 +64,8 @@ interface HistoryEntry {
   structureOverall?: string;
   expiryMinutes?: number;
   expiryTime?: number; // ms epoch when this trade expires
+  exitPrice?: number; // resolved exit price (from backend)
+  checkedAt?: string; // when result was resolved
   aiAgree?: boolean;
   autoChecked?: boolean; // true if result was set by auto win/loss check
   // ── B5 diagnostics (backend v6.9.2). All optional: entries written by an
@@ -182,6 +185,8 @@ export default function App() {
   });
   // Manual retry: bumping this re-runs the server-stats effect.
   const [serverWrReloadKey, setServerWrReloadKey] = useState(0);
+  // History detail modal (Premium #2)
+  const [detailEntry, setDetailEntry] = useState<HistoryEntry | null>(null);
   // Spec §3.4 throttle: memoise each computed view for 5 min so re-entering the
   // History tab does not repeat the ~13-request fan-out. Keyed by
   // (scope, pair, window); a manual retry bypasses it.
@@ -1077,14 +1082,14 @@ export default function App() {
                 </div>
               ) : (
                 history.slice(0, 30).map((entry, idx) => (
-                  <HistoryRow key={entry.id} entry={entry} onReport={handleReport} onDelete={(id) => setHistory(prev => prev.filter(h => h.id !== id))} isLast={idx === Math.min(history.length, 30) - 1} />
+                  <HistoryRow key={entry.id} entry={entry} onReport={handleReport} onDelete={(id) => setHistory(prev => prev.filter(h => h.id !== id))} onDetail={(e) => setDetailEntry(e)} isLast={idx === Math.min(history.length, 30) - 1} />
                 ))
               )}
             </div>
 
             {history.length > 0 && (
-              <button 
-                onClick={() => setHistory([])}
+              <button
+                onClick={() => { if (confirm('Clear all local history? This only removes entries from your device — server-side results are unaffected.')) setHistory([]); }}
                 className="w-full mt-4 py-3 md-surface text-[#ef5350] font-medium active:scale-95 transition-transform"
               >
                 Clear History
@@ -1161,6 +1166,28 @@ export default function App() {
         onToggleFavorite={toggleFavorite}
         onSelect={(p) => { setSelectedPair(p); setPickerOpen(false); }}
         onClose={() => setPickerOpen(false)}
+      />
+
+      {/* History Detail Modal (Premium #2) */}
+      <HistoryDetailModal
+        entry={detailEntry ? {
+          pair: detailEntry.pair,
+          direction: detailEntry.direction,
+          result: detailEntry.result,
+          confidence: detailEntry.confidence,
+          grade: detailEntry.grade,
+          entryPrice: detailEntry.entryPrice,
+          exitPrice: detailEntry.exitPrice,
+          timestamp: detailEntry.timestamp,
+          expiryMinutes: detailEntry.expiryMinutes,
+          timeframe: detailEntry.timeframe,
+          structureVerdict: detailEntry.structureVerdict,
+          aiStatus: detailEntry.aiStatus,
+          coreConfidence: detailEntry.coreConfidence,
+          entrySource: detailEntry.entrySource,
+          autoChecked: detailEntry.autoChecked,
+        } : null}
+        onClose={() => setDetailEntry(null)}
       />
     </div>
   );
@@ -1615,7 +1642,7 @@ function MiniStat({ label, value, color }: { label: string; value: string | numb
   );
 }
 
-function HistoryRow({ entry, onReport, onDelete, isLast }: { entry: HistoryEntry; onReport: (id: string, result: 'WIN' | 'LOSS') => void; onDelete: (id: string) => void; isLast: boolean }) {
+function HistoryRow({ entry, onReport, onDelete, onDetail, isLast }: { entry: HistoryEntry; onReport: (id: string, result: 'WIN' | 'LOSS') => void; onDelete: (id: string) => void; onDetail: (entry: HistoryEntry) => void; isLast: boolean }) {
   const isBuy = entry.direction === 'BUY';
   const isPending = !entry.result || entry.result === 'PENDING';
   const isReportable = entry.reportable !== false;
@@ -1651,7 +1678,8 @@ function HistoryRow({ entry, onReport, onDelete, isLast }: { entry: HistoryEntry
 
   return (
     <div
-      className={cn("p-4 transition-colors select-none", !isLast && "border-b border-[#3a3a3e]", pressing && "bg-[#ef5350]/5")}
+      className={cn("p-4 transition-colors select-none cursor-pointer active:bg-[#27272d]/50", !isLast && "border-b border-[#3a3a3e]", pressing && "bg-[#ef5350]/5")}
+      onClick={() => { if (!confirmDelete) onDetail(entry); }}
       onTouchStart={startPress}
       onTouchEnd={cancelPress}
       onTouchMove={cancelPress}
