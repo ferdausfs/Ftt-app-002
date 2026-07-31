@@ -1411,103 +1411,151 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
   const signal = data.signal.finalSignal;
   const isBuy = signal === 'BUY';
   const isSell = signal === 'SELL';
+  const isNoTrade = signal === 'NO_TRADE';
   const confidenceNum = parseInt(data.signal.confidence) || 0;
   const best = data.signal.bestTimeframe;
   const entryPrice = data.signal.recommendations?.[best?.timeframe as '5min']?.entry?.price;
   const coreConfidence = data.signal.coreConfidence;
   const structureOverall = data.signal.structureVerdict?.overall;
   const aiBadge = aiStatusBadge(deriveAiStatus(data));
+  const expiryLabel = best?.expiry?.humanReadable || '—';
+  const cdLabel = best?.expiry?.countdown?.label;
+  const dirColor = isBuy ? '#00e676' : isSell ? '#ff5252' : '#9e9e9e';
+  const dirTint = isBuy ? 'rgba(0,230,118,0.06)' : isSell ? 'rgba(255,82,82,0.06)' : 'transparent';
+  const dirGlow = isBuy ? '0 0 40px rgba(0,230,118,0.12)' : isSell ? '0 0 40px rgba(255,82,82,0.12)' : 'none';
 
   return (
-    <div className="premium-card p-0 overflow-hidden scale-in">
-      <div className={cn("h-1.5 w-full", isBuy ? "bg-gradient-to-r from-[#81c784] to-[#4caf50]" : isSell ? "bg-gradient-to-r from-[#ef5350] to-[#f44336]" : "bg-gradient-to-r from-[#bdbdbd] to-[#9e9e9e]")} />
+    <div className="scale-in overflow-hidden" style={{
+      borderRadius: 24,
+      background: `linear-gradient(160deg, ${dirTint}, rgba(20,20,23,0.96))`,
+      border: '1px solid rgba(255,255,255,0.05)',
+      boxShadow: `0 16px 48px rgba(0,0,0,0.5), ${dirGlow}`,
+    }}>
+      {/* Accent line */}
+      <div style={{ height: 3, background: `linear-gradient(90deg, ${dirColor}40, transparent 80%)` }} />
+
       <div className="p-5">
-        <div className="flex items-center justify-between mb-4">
-          <button onClick={onPairClick} className="flex items-center gap-2 px-3 py-2 md-surface-variant rounded-xl active:scale-95 transition-transform">
-            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold", data.pair.includes('OTC') ? "bg-[#ff9800]/20 text-[#ff9800]" : ['BTC','ETH'].some(c => data.pair.includes(c)) ? "bg-[#9c27b0]/20 text-[#9c27b0]" : "bg-[#2196f3]/20 text-[#2196f3]")}>
-              {data.pair.slice(0, 2)}
+        {/* ── Pair + Market ── */}
+        <div className="flex items-center justify-between mb-6">
+          <button onClick={onPairClick} className="flex items-center gap-2.5 active:scale-95 transition-transform">
+            <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold",
+              data.pair.includes('OTC') ? "bg-[#ff9800]/12 text-[#ffb74d]" :
+              ['BTC','ETH'].some(c => data.pair.includes(c)) ? "bg-[#9c27b0]/12 text-[#ce93d8]" :
+              "bg-[#42a5f5]/12 text-[#64b5f6]"
+            )}>{data.pair.slice(0, 2)}</div>
+            <div>
+              <div className="text-[15px] font-semibold tracking-tight">{data.pair}</div>
+              <div className="text-[9px] text-[#6e6e73] uppercase tracking-[0.15em]">{data.assetType}</div>
             </div>
-            <span className="font-medium">{data.pair}</span>
           </button>
-          <div className={cn("px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5", data.marketStatus === 'OPEN' ? "bg-[#81c784]/20 text-[#81c784]" : "bg-[#ef5350]/20 text-[#ef5350]")}>
-            <div className={cn("w-2 h-2 rounded-full", data.marketStatus === 'OPEN' ? "bg-[#81c784] animate-pulse" : "bg-[#ef5350]")} />
-            {data.marketStatus}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{
+            background: data.marketStatus === 'OPEN' ? 'rgba(0,230,118,0.08)' : 'rgba(255,82,82,0.08)'
+          }}>
+            <div className={cn("w-1.5 h-1.5 rounded-full", data.marketStatus === 'OPEN' ? "bg-[#00e676]" : "bg-[#ff5252]")}
+              style={data.marketStatus === 'OPEN' ? { boxShadow: '0 0 6px #00e676', animation: 'pulse 2s infinite' } : {}} />
+            <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: data.marketStatus === 'OPEN' ? '#00e676' : '#ff5252' }}>{data.marketStatus}</span>
           </div>
         </div>
 
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-4">
-            <div className={cn("w-16 h-16 rounded-2xl flex items-center justify-center", isBuy ? "bg-[#81c784]/20" : isSell ? "bg-[#ef5350]/20" : "bg-[#bdbdbd]/20")}>
-              {isBuy ? <ArrowUp className="w-8 h-8 text-[#81c784]" strokeWidth={2.5} /> : isSell ? <ArrowDown className="w-8 h-8 text-[#ef5350]" strokeWidth={2.5} /> : <Minus className="w-8 h-8 text-[#bdbdbd]" strokeWidth={2.5} />}
+        {/* ── HERO: Direction + Confidence ── */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex-1">
+            <div className="text-[9px] uppercase tracking-[0.25em] text-[#6e6e73] mb-1">Signal Direction</div>
+            <div className="text-[44px] font-extrabold leading-none tracking-tight mb-2" style={{ color: dirColor, textShadow: `0 0 24px ${dirColor}30` }}>
+              {isBuy ? 'BUY' : isSell ? 'SELL' : 'WAIT'}
             </div>
-            <div>
-              <div className="text-sm text-[#b0b3b8] mb-0.5">Signal</div>
-              <div className={cn("text-3xl font-medium", isBuy ? "text-[#81c784]" : isSell ? "text-[#ef5350]" : "text-[#bdbdbd]")}>{signal}</div>
+            <div className="flex items-center gap-2">
+              {data.signal.grade && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{
+                  background: data.signal.grade.grade === 'A+' ? 'rgba(0,230,118,0.12)' :
+                    data.signal.grade.grade === 'A' ? 'rgba(76,175,80,0.12)' :
+                    data.signal.grade.grade === 'B' ? 'rgba(66,165,245,0.12)' : 'rgba(255,183,77,0.12)',
+                  color: data.signal.grade.grade === 'A+' ? '#00e676' :
+                    data.signal.grade.grade === 'A' ? '#4caf50' :
+                    data.signal.grade.grade === 'B' ? '#42a5f5' : '#ffb74d',
+                }}>{data.signal.grade.grade} · {data.signal.grade.label}</span>
+              )}
+              {best?.timeframe && <span className="text-[9px] text-[#6e6e73] font-medium uppercase">{best.timeframe}</span>}
             </div>
           </div>
 
-          <div className="relative w-24 h-24">
-            <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
-              <circle cx="50" cy="50" r="42" stroke="#27272d" strokeWidth="8" fill="none" />
-              <circle cx="50" cy="50" r="42" stroke={isBuy ? '#81c784' : isSell ? '#ef5350' : '#bdbdbd'} strokeWidth="8" fill="none" strokeLinecap="round" strokeDasharray={264} strokeDashoffset={264 - (confidenceNum / 100) * 264} className="transition-all duration-1000" />
+          {/* Confidence Ring */}
+          <div className="relative flex-shrink-0" style={{ width: 90, height: 90 }}>
+            <svg width="90" height="90" style={{ transform: 'rotate(-90deg)' }}>
+              <circle cx="45" cy="45" r="38" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="5" />
+              <circle cx="45" cy="45" r="38" fill="none" stroke={dirColor} strokeWidth="5" strokeLinecap="round"
+                strokeDasharray={239} strokeDashoffset={239 - (confidenceNum / 100) * 239}
+                style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1)', filter: `drop-shadow(0 0 5px ${dirColor}60)` }}
+              />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className={cn("text-2xl font-light number-tabular", isBuy ? "text-[#81c784]" : isSell ? "text-[#ef5350]" : "text-[#bdbdbd]")}>{confidenceNum}</span>
-              <span className="text-xs text-[#b0b3b8]">%</span>
+              <span className="text-[26px] font-bold number-tabular leading-none" style={{ color: dirColor }}>{confidenceNum}</span>
+              <span className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mt-0.5">confidence</span>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
-          <div className={cn("px-3 py-1.5 rounded-lg text-sm font-medium", data.signal.grade.grade === 'A' ? "bg-[#81c784]/20 text-[#81c784]" : data.signal.grade.grade === 'B' ? "bg-[#42a5f5]/20 text-[#42a5f5]" : data.signal.grade.grade === 'C' ? "bg-[#ffb74d]/20 text-[#ffb74d]" : "bg-[#ef5350]/20 text-[#ef5350]")}>
-            Grade {data.signal.grade.grade} · {data.signal.grade.label}
+        {/* ── Key Data Grid ── */}
+        {!isNoTrade && (
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.02)' }}>
+              <div className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mb-1">Entry Price</div>
+              <div className="text-[13px] font-bold number-tabular">{entryPrice?.toLocaleString() ?? '—'}</div>
+            </div>
+            <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.02)' }}>
+              <div className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mb-1">Expiry</div>
+              <div className="text-[13px] font-bold">{expiryLabel}</div>
+            </div>
+            <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.02)' }}>
+              <div className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mb-1">Candle Close</div>
+              <div className="text-[13px] font-bold number-tabular">{cdLabel || '—'}</div>
+            </div>
           </div>
-          {best?.timeframe && <div className="px-3 py-1.5 bg-[#323238] rounded-lg text-xs font-medium flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />{best.timeframe}</div>}
+        )}
+
+        {/* ── HTF + Regime ── */}
+        <div className="flex items-center gap-4 mb-4 pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+          {data.signal.higherTFTrend && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] uppercase tracking-wider text-[#6e6e73]">HTF 15m</span>
+              <span className="text-xs font-bold" style={{ color: data.signal.higherTFTrend === 'BUY' ? '#00e676' : data.signal.higherTFTrend === 'SELL' ? '#ff5252' : '#9e9e9e' }}>{data.signal.higherTFTrend}</span>
+            </div>
+          )}
+          {data.signal.marketRegime && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] uppercase tracking-wider text-[#6e6e73]">Regime</span>
+              <span className="text-xs font-medium text-[#b0b3b8]">{data.signal.marketRegime}</span>
+            </div>
+          )}
+          {data.signal.regimeAdvice && <span className="text-[10px] text-[#6e6e73] truncate flex-1">{data.signal.regimeAdvice}</span>}
         </div>
 
-        {/* ── B5 instrumentation badges (backend v6.9.2) ── */}
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
-          {/* Core vs displayed confidence: only worth showing when filters/AI
-              actually moved the number, otherwise it is just noise. */}
+        {/* ── Diagnostic Badges ── */}
+        <div className="flex items-center gap-1.5 flex-wrap mb-3">
           {typeof coreConfidence === 'number' && Math.abs(coreConfidence - confidenceNum) >= 5 && (
-            <div className="px-2.5 py-1 rounded-lg bg-[#9575cd]/15 text-[#b39ddb] text-[11px] font-medium">
-              Displayed {confidenceNum}% · Core {coreConfidence}%
-            </div>
+            <span className="text-[9px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(149,117,205,0.1)', color: '#b39ddb' }}>Core {coreConfidence}%</span>
           )}
-
           {structureOverall && structureOverall !== 'N/A' && (
-            <div className={cn(
-              "px-2.5 py-1 rounded-lg text-[11px] font-medium",
-              structureOverall === 'ALIGNED' && "bg-[#81c784]/15 text-[#81c784]",
-              structureOverall === 'AGAINST' && "bg-[#ef5350]/15 text-[#ef5350]",
-              structureOverall === 'MIXED' && "bg-[#ffb74d]/15 text-[#ffb74d]",
-              structureOverall === 'NEUTRAL' && "bg-[#bdbdbd]/15 text-[#bdbdbd]",
-            )}>
-              Structure {structureOverall}
-            </div>
+            <span className="text-[9px] font-medium px-2 py-0.5 rounded-md" style={{
+              background: structureOverall === 'ALIGNED' ? 'rgba(0,230,118,0.08)' : structureOverall === 'AGAINST' ? 'rgba(255,82,82,0.08)' : 'rgba(255,183,77,0.08)',
+              color: structureOverall === 'ALIGNED' ? '#00e676' : structureOverall === 'AGAINST' ? '#ff5252' : '#ffb74d',
+            }}>Struct: {structureOverall}</span>
           )}
-
           {aiBadge && (
-            <div className={cn("px-2.5 py-1 rounded-lg text-[11px] font-medium", aiBadge.className)}>
-              {aiBadge.label}
-            </div>
+            <span className="text-[9px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.03)', color: '#b0b3b8' }}>{aiBadge.label}</span>
           )}
-
           {data.entrySource && (
-            <div className="px-2.5 py-1 rounded-lg bg-[#323238] text-[#b0b3b8] text-[11px] font-medium">
-              {ENTRY_SOURCE_LABEL[data.entrySource] || data.entrySource}
-            </div>
+            <span className="text-[9px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.03)', color: '#6e6e73' }}>{ENTRY_SOURCE_LABEL[data.entrySource] || data.entrySource}</span>
           )}
         </div>
 
-        {/* Premium #4: filter/block reason transparency (D2 + all filtersApplied) */}
+        {/* Filter badges (D2 transparency) */}
         <FilterBadges filters={data.signal.filtersApplied} />
 
-        {entryPrice && (
-          <div className="grid grid-cols-3 gap-3 pt-4 border-t border-[#3a3a3e]">
-            <div><div className="text-xs text-[#b0b3b8] mb-1">Entry Price</div><div className="text-base font-medium number-tabular">{entryPrice}</div></div>
-            <div><div className="text-xs text-[#b0b3b8] mb-1">Timeframe</div><div className="text-base font-medium">{best?.timeframe}</div></div>
-            <div><div className="text-xs text-[#b0b3b8] mb-1">Expiry</div><div className="text-base font-medium">{best?.expiry?.humanReadable || '—'}</div></div>
+        {/* Entry reason */}
+        {data.signal.entryReason && (
+          <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.03)' }}>
+            <p className="text-[11px] text-[#8e9099] leading-relaxed">{data.signal.entryReason}</p>
           </div>
         )}
       </div>
