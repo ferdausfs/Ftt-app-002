@@ -1032,8 +1032,8 @@ export default function App() {
         {activeTab === 'history' && (
           <div className="fade-in">
             <div className="mb-4">
-              <h2 className="text-2xl font-medium mb-1">Signal History</h2>
-              <p className="text-[#b0b3b8] text-sm">Track your trading performance</p>
+              <h2 className="text-[26px] font-bold mb-0.5 tracking-tight">Signal History</h2>
+              <p className="text-[11px] text-[#6e6e73] uppercase tracking-[0.15em] font-medium">Track your trading performance</p>
             </div>
             
             {/* Stats */}
@@ -1077,7 +1077,7 @@ export default function App() {
             />
 
             {/* List */}
-            <div className="md-surface overflow-hidden">
+            <div className="overflow-hidden" style={{ borderRadius: 20, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
               {history.length === 0 ? (
                 <div className="p-10 text-center">
                   <Clock className="w-12 h-12 text-[#3a3a3e] mx-auto mb-3" />
@@ -1094,7 +1094,7 @@ export default function App() {
             {history.length > 0 && (
               <button
                 onClick={() => { if (confirm('Clear all local history? This only removes entries from your device — server-side results are unaffected.')) setHistory([]); }}
-                className="w-full mt-4 py-3 md-surface text-[#ef5350] font-medium active:scale-95 transition-transform"
+                className="w-full mt-4 py-3 text-[#ff5252] font-medium text-sm active:scale-95 transition-transform"
               >
                 Clear History
               </button>
@@ -1106,13 +1106,13 @@ export default function App() {
         {activeTab === 'settings' && (
           <div className="fade-in">
             <div className="mb-4">
-              <h2 className="text-2xl font-medium mb-1">Settings</h2>
-              <p className="text-[#b0b3b8] text-sm">Customize your experience</p>
+              <h2 className="text-[26px] font-bold mb-0.5 tracking-tight">Settings</h2>
+              <p className="text-[11px] text-[#6e6e73] uppercase tracking-[0.15em] font-medium">Customize your experience</p>
             </div>
 
             <HealthPill />
 
-            <div className="md-surface overflow-hidden mb-4">
+            <div className="overflow-hidden mb-3" style={{ borderRadius: 20, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
               <SettingRow
                 icon={autoRefresh ? RefreshCw : Zap}
                 iconColor="#42a5f5"
@@ -1124,7 +1124,7 @@ export default function App() {
               />
             </div>
 
-            <div className="md-surface overflow-hidden mb-4">
+            <div className="overflow-hidden mb-3" style={{ borderRadius: 20, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
               <SettingRow
                 icon={Trash2}
                 iconColor="#ef5350"
@@ -1135,7 +1135,7 @@ export default function App() {
               />
             </div>
 
-            <div className="md-surface overflow-hidden">
+            <div className="overflow-hidden" style={{ borderRadius: 20, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
               <SettingRow icon={Info} iconColor="#42a5f5" label="Version" value="2.0.0" />
               <SettingRow icon={Code} iconColor="#b39ddb" label="API Method" value={signalData?.signal?.method?.split('_').slice(0, 2).join(' ') || 'v6.9.2'} isLast />
             </div>
@@ -1143,7 +1143,7 @@ export default function App() {
             <div className="text-center py-8">
               <div className="inline-flex items-center gap-2 text-xs text-[#6e6e73]">
                 <Code className="w-4 h-4" />
-                <span>Signal Pro · Built with Material You</span>
+                <span>SignalPro · AI Trading Intelligence</span>
               </div>
               {lastUpdated && <p className="text-[10px] text-[#4a4a4f] mt-2">Last sync: {lastUpdated.toLocaleTimeString()}</p>}
             </div>
@@ -1808,24 +1808,26 @@ function StatCard({ label, value, color }: { label: string; value: number | stri
 }
 function SettingRow({ icon: Icon, iconColor, label, description, value, toggle, toggleValue, onToggle, onClick, isLast }: any) {
   return (
-    <div className={cn("flex items-center gap-3 p-4", !isLast && "border-b border-[#3a3a3e]", onClick && "active:scale-95 transition-transform cursor-pointer")} onClick={onClick}>
-      <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: `${iconColor}20` }}>
-        <Icon className="w-4 h-4" style={{ color: iconColor }} />
+    <div className={cn("flex items-center gap-3 p-4", onClick && "active:scale-[0.98] transition-transform cursor-pointer")} style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.03)' }} onClick={onClick}>
+      <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: `${iconColor}12` }}>
+        <Icon className="w-[18px] h-[18px]" style={{ color: iconColor }} />
       </div>
       <div className="flex-1">
-        <div className="text-sm font-medium">{label}</div>
-        {description && <div className="text-xs text-[#b0b3b8]">{description}</div>}
+        <div className="text-[13px] font-semibold">{label}</div>
+        {description && <div className="text-[11px] text-[#6e6e73]">{description}</div>}
       </div>
-      {value && <span className="text-[#b0b3b8] text-sm">{value}</span>}
+      {value && <span className="text-[#8e9099] text-xs font-medium">{value}</span>}
       {toggle && (
-        <button onClick={(e) => { e.stopPropagation(); onToggle?.(); }} className={cn("relative w-12 h-6 rounded-full transition-colors", toggleValue ? "bg-[#42a5f5]" : "bg-[#3a3a3e]")}>
-          <div className={cn("absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform", toggleValue ? "translate-x-6" : "translate-x-0.5")} />
+        <button onClick={(e) => { e.stopPropagation(); onToggle?.(); }} className="relative w-11 h-6 rounded-full transition-all active:scale-90" style={{
+          background: toggleValue ? '#00e676' : 'rgba(255,255,255,0.08)',
+          boxShadow: toggleValue ? '0 0 8px rgba(0,230,118,0.3)' : 'none',
+        }}>
+          <div className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform" style={{ transform: toggleValue ? 'translateX(22px)' : 'translateX(2px)' }} />
         </button>
       )}
     </div>
   );
 }
-
 function NavButton({ icon: Icon, label, active, onClick, badge }: { icon: any; label: string; active: boolean; onClick: () => void; badge?: number }) {
   return (
     <button onClick={onClick} className={cn("flex flex-col items-center gap-0.5 px-3 py-1.5 active:scale-90 transition-transform relative", active ? "text-[#4dd0e1]" : "text-[#6e6e73]")} style={active ? { filter: 'drop-shadow(0 0 4px rgba(77,208,225,0.3))' } : {}}>
