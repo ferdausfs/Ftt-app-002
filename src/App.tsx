@@ -1705,24 +1705,22 @@ function HistoryRow({ entry, onReport, onDelete, onDetail, isLast }: { entry: Hi
 
   const startPress = () => {
     setPressing(true);
-    pressTimer.current = setTimeout(() => {
-      setPressing(false);
-      setConfirmDelete(true);
-      if (navigator.vibrate) navigator.vibrate(40);
-    }, 550);
+    pressTimer.current = setTimeout(() => { setPressing(false); setConfirmDelete(true); if (navigator.vibrate) navigator.vibrate(40); }, 550);
   };
-  const cancelPress = () => {
-    setPressing(false);
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-  };
+  const cancelPress = () => { setPressing(false); if (pressTimer.current) clearTimeout(pressTimer.current); };
+
+  const resultColor = entry.result === 'WIN' ? '#00e676' : entry.result === 'LOSS' ? '#ff5252' : '#ffb74d';
+  const resultBg = entry.result === 'WIN' ? 'rgba(0,230,118,0.04)' : entry.result === 'LOSS' ? 'rgba(255,82,82,0.04)' : 'rgba(255,183,77,0.03)';
+  const resultLabel = entry.result === 'WIN' ? '✅ WIN' : entry.result === 'LOSS' ? '❌ LOSS' : '⏳';
+  const dirColor = isBuy ? '#00e676' : '#ff5252';
 
   if (confirmDelete) {
     return (
-      <div className={cn("p-4 flex items-center justify-between gap-3 bg-[#ef5350]/10", !isLast && "border-b border-[#3a3a3e]")}>
-        <span className="text-sm text-[#ef5350] font-medium">Delete {entry.pair} signal?</span>
+      <div className="p-4 flex items-center justify-between gap-3 rounded-2xl mb-1" style={{ background: 'rgba(255,82,82,0.08)' }}>
+        <span className="text-xs text-[#ff5252] font-medium">Delete this signal?</span>
         <div className="flex gap-2">
-          <button onClick={() => onDelete(entry.id)} className="px-3 py-1.5 rounded-lg bg-[#ef5350] text-white text-xs font-medium active:scale-95 transition-transform">Delete</button>
-          <button onClick={() => setConfirmDelete(false)} className="px-3 py-1.5 rounded-lg bg-[#27272d] text-[#e3e2e6] text-xs font-medium active:scale-95 transition-transform">Cancel</button>
+          <button onClick={() => onDelete(entry.id)} className="px-3 py-1.5 rounded-xl text-white text-[10px] font-bold active:scale-95 transition-transform" style={{ background: '#ff5252' }}>Delete</button>
+          <button onClick={() => setConfirmDelete(false)} className="px-3 py-1.5 rounded-xl text-[10px] font-bold active:scale-95 transition-transform" style={{ background: 'rgba(255,255,255,0.05)' }}>Cancel</button>
         </div>
       </div>
     );
@@ -1730,160 +1728,84 @@ function HistoryRow({ entry, onReport, onDelete, onDetail, isLast }: { entry: Hi
 
   return (
     <div
-      className={cn("p-4 transition-colors select-none cursor-pointer active:bg-[#27272d]/50 rounded-xl mb-1", !isLast && "border-b border-[#3a3a3e]/30", pressing && "bg-[#ef5350]/5", entry.result === 'WIN' && "history-card-win", entry.result === 'LOSS' && "history-card-loss", (!entry.result || entry.result === 'PENDING') && "history-card-pending")}
+      className={cn("p-3.5 mb-1 cursor-pointer active:scale-[0.98] transition-transform", pressing && "scale-[0.98]")}
+      style={{ borderRadius: 16, background: resultBg, border: `1px solid rgba(255,255,255,0.04)`, borderLeft: `3px solid ${resultColor}` }}
       onClick={() => { if (!confirmDelete) onDetail(entry); }}
-      onTouchStart={startPress}
-      onTouchEnd={cancelPress}
-      onTouchMove={cancelPress}
-      onMouseDown={startPress}
-      onMouseUp={cancelPress}
-      onMouseLeave={cancelPress}
+      onTouchStart={startPress} onTouchEnd={cancelPress} onTouchMove={cancelPress}
+      onMouseDown={startPress} onMouseUp={cancelPress} onMouseLeave={cancelPress}
     >
+      {/* Row 1: pair + result badge */}
       <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-3">
-          <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", isBuy ? "bg-[#81c784]/15" : "bg-[#ef5350]/15")}>
-            {isBuy ? <ArrowUp className="w-4 h-4 text-[#81c784]" /> : <ArrowDown className="w-4 h-4 text-[#ef5350]" />}
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-bold" style={{ background: `${dirColor}15`, color: dirColor }}>
+            {isBuy ? '▲' : '▼'}
           </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-medium text-sm">{entry.pair}</span>
-              <span className="text-[10px] px-1.5 py-0.5 bg-[#27272d] rounded text-[#b0b3b8]">{entry.timeframe}</span>
-              {entry.grade && (
-                <span className="text-[10px] px-1.5 py-0.5 bg-[#9575cd]/20 text-[#b39ddb] rounded font-bold">
-                  {entry.grade}{entry.gradeLabel ? ` · ${entry.gradeLabel}` : ''}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 mt-0.5 text-xs text-[#6e6e73] flex-wrap">
-              <span className="number-tabular">{entry.entryPrice}</span>
-              <span>·</span>
-              <span>{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              <span>·</span>
-              <span>{entry.confidence}</span>
-              {entry.expiryMinutes && (
-                <>
-                  <span>·</span>
-                  <span>exp {entry.expiryMinutes}m</span>
-                </>
-              )}
-            </div>
-            {/* Structure verdict line */}
-            {entry.structureDirection && (
-              <div className="flex items-center gap-1.5 mt-1">
-                <span className="text-[9px] text-[#6e6e73]">Structure:</span>
-                <span className={cn(
-                  "text-[9px] font-bold",
-                  entry.structureDirection === 'BUY' && "text-[#81c784]",
-                  entry.structureDirection === 'SELL' && "text-[#ef5350]",
-                  (entry.structureDirection === 'NEUTRAL' || entry.structureDirection === 'MIXED') && "text-[#b0b3b8]",
-                )}>
-                  {entry.structureDirection}{entry.structureStrength && entry.structureStrength !== 'NEUTRAL' ? ` (${entry.structureStrength})` : ''}
-                </span>
-                {entry.structureOverall && entry.structureOverall !== 'N/A' && (
-                  <span className={cn(
-                    "text-[9px] px-1 rounded",
-                    entry.structureOverall === 'ALIGNED' && "bg-[#81c784]/15 text-[#81c784]",
-                    entry.structureOverall === 'AGAINST' && "bg-[#ef5350]/15 text-[#ef5350]",
-                    entry.structureOverall === 'MIXED' && "bg-[#ffb74d]/15 text-[#ffb74d]",
-                    entry.structureOverall === 'NEUTRAL' && "bg-[#bdbdbd]/15 text-[#bdbdbd]",
-                  )}>
-                    {entry.structureOverall}
-                  </span>
-                )}
-                {entry.aiAgree !== undefined && (
-                  <span className={cn("text-[9px]", entry.aiAgree ? "text-[#81c784]" : "text-[#ffb74d]")}>
-                    {entry.aiAgree ? '· AI ✓' : '· AI ⚠'}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* ── B5 diagnostics row (backend v6.9.2). Rendered only when the
-                record actually carries them, so pre-upgrade localStorage
-                entries keep displaying exactly as before. ── */}
-            {(entry.structureVerdict || entry.aiStatus || typeof entry.coreConfidence === 'number' || entry.entrySource) && (
-              <div className="flex items-center gap-1.5 mt-1 flex-wrap text-[9px] text-[#6e6e73]">
-                {entry.structureVerdict && entry.structureVerdict !== 'N/A' && (
-                  <span className={cn(
-                    "px-1 rounded",
-                    entry.structureVerdict === 'ALIGNED' && "bg-[#81c784]/15 text-[#81c784]",
-                    entry.structureVerdict === 'AGAINST' && "bg-[#ef5350]/15 text-[#ef5350]",
-                    entry.structureVerdict === 'MIXED' && "bg-[#ffb74d]/15 text-[#ffb74d]",
-                    entry.structureVerdict === 'NEUTRAL' && "bg-[#bdbdbd]/15 text-[#bdbdbd]",
-                  )}>
-                    {entry.structureVerdict}
-                  </span>
-                )}
-                {entry.aiStatus && entry.aiStatus !== 'SKIPPED' && (
-                  <span className="px-1 rounded bg-[#27272d] text-[#b0b3b8]">AI: {entry.aiStatus}</span>
-                )}
-                {typeof entry.coreConfidence === 'number' && (
-                  <span className="px-1 rounded bg-[#9575cd]/15 text-[#b39ddb]">Core {entry.coreConfidence}%</span>
-                )}
-                {entry.entrySource && (
-                  <span className="px-1 rounded bg-[#27272d] text-[#b0b3b8]">Src: {entry.entrySource}</span>
-                )}
-              </div>
-            )}
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-bold">{entry.pair}</span>
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: `${dirColor}12`, color: dirColor }}>{entry.direction}</span>
+            {entry.grade && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: '#b0b3b8' }}>{entry.grade}</span>}
           </div>
         </div>
-        {entry.result === 'WIN' && (
-          <div className="px-2.5 py-1 rounded-full bg-[#81c784]/20 text-[#81c784] text-xs font-medium flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" />WIN{entry.autoChecked && <span className="text-[8px] opacity-70">·auto</span>}
-          </div>
-        )}
-        {entry.result === 'LOSS' && (
-          <div className="px-2.5 py-1 rounded-full bg-[#ef5350]/20 text-[#ef5350] text-xs font-medium flex items-center gap-1">
-            <XCircle className="w-3 h-3" />LOSS{entry.autoChecked && <span className="text-[8px] opacity-70">·auto</span>}
-          </div>
-        )}
-        {isPending && entry.expiryMinutes && !expiryPassed && (
-          <div className="px-2.5 py-1 rounded-full bg-[#42a5f5]/15 text-[#42a5f5] text-[10px] font-medium">
-            running
-          </div>
-        )}
+        <span className="text-[10px] font-bold px-2 py-1 rounded-lg" style={{ background: `${resultColor}12`, color: resultColor }}>
+          {resultLabel}{entry.autoChecked && entry.result ? <span className="text-[7px] opacity-60 ml-0.5">auto</span> : ''}
+        </span>
       </div>
-      {!isReportable && (
-        <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#ffb74d]/10 border border-[#ffb74d]/20 px-3 py-2 text-[11px] text-[#ffb74d]">
-          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-          <span>Local-only signal: server report is disabled because the worker did not return a signal ID.</span>
+
+      {/* Row 2: data line */}
+      <div className="flex items-center gap-3 text-[10px] text-[#6e6e73] flex-wrap">
+        {entry.entryPrice > 0 && <span className="number-tabular font-medium text-[#b0b3b8]">{entry.entryPrice.toLocaleString()}</span>}
+        <span>{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        <span className="number-tabular">{entry.confidence}</span>
+        {entry.expiryMinutes && <span>{entry.expiryMinutes}m</span>}
+        {entry.timeframe && <span className="uppercase">{entry.timeframe}</span>}
+      </div>
+
+      {/* Row 3: diagnostics (only if present) */}
+      {(entry.structureVerdict || entry.aiStatus || typeof entry.coreConfidence === 'number') && (
+        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+          {entry.structureVerdict && entry.structureVerdict !== 'N/A' && (
+            <span className="text-[8px] font-medium px-1.5 py-0.5 rounded" style={{
+              background: entry.structureVerdict === 'ALIGNED' ? 'rgba(0,230,118,0.08)' : entry.structureVerdict === 'AGAINST' ? 'rgba(255,82,82,0.08)' : 'rgba(255,183,77,0.08)',
+              color: entry.structureVerdict === 'ALIGNED' ? '#00e676' : entry.structureVerdict === 'AGAINST' ? '#ff5252' : '#ffb74d',
+            }}>{entry.structureVerdict}</span>
+          )}
+          {entry.aiStatus && entry.aiStatus !== 'SKIPPED' && (
+            <span className="text-[8px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.03)', color: '#8e9099' }}>AI: {entry.aiStatus}</span>
+          )}
+          {typeof entry.coreConfidence === 'number' && (
+            <span className="text-[8px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(149,117,205,0.1)', color: '#b39ddb' }}>Core {entry.coreConfidence}%</span>
+          )}
         </div>
       )}
-      {entry.reportStatus === 'syncing' && (
-        <div className="mt-2 rounded-xl bg-[#42a5f5]/10 border border-[#42a5f5]/20 px-3 py-2 text-[11px] text-[#42a5f5]">
-          Syncing result to server…
+
+      {/* Exit price */}
+      {entry.exitPrice && entry.exitPrice > 0 && (
+        <div className="mt-1.5 text-[10px] flex items-center gap-2">
+          <span className="text-[#6e6e73]">Exit:</span>
+          <span className="number-tabular font-medium" style={{ color: resultColor }}>{entry.exitPrice.toLocaleString()}</span>
         </div>
       )}
-      {entry.reportStatus === 'synced' && (
-        <div className="mt-2 rounded-xl bg-[#81c784]/10 border border-[#81c784]/20 px-3 py-2 text-[11px] text-[#81c784]">
-          Server report synced.
-        </div>
-      )}
-      {entry.reportStatus === 'failed' && (
-        <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#ef5350]/10 border border-[#ef5350]/20 px-3 py-2 text-[11px] text-[#ffb4ab]">
-          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-          <span>{entry.reportError || 'Server report failed.'}</span>
-        </div>
-      )}
-      {isPending && isReportable && (
+
+      {/* Pending actions */}
+      {isPending && isReportable && expiryPassed && (
         <div className="flex gap-2 mt-2">
-          <button onClick={() => onReport(entry.id, 'WIN')} className="flex-1 py-2 rounded-xl bg-[#81c784]/15 text-[#81c784] font-medium text-xs flex items-center justify-center gap-1 active:scale-95 transition-transform"><CheckCircle2 className="w-3.5 h-3.5" />WIN</button>
-          <button onClick={() => onReport(entry.id, 'LOSS')} className="flex-1 py-2 rounded-xl bg-[#ef5350]/15 text-[#ef5350] font-medium text-xs flex items-center justify-center gap-1 active:scale-95 transition-transform"><XCircle className="w-3.5 h-3.5" />LOSS</button>
+          <button onClick={(e) => { e.stopPropagation(); onReport(entry.id, 'WIN'); }} className="flex-1 py-1.5 rounded-xl text-[10px] font-bold active:scale-95 transition-transform flex items-center justify-center gap-1" style={{ background: 'rgba(0,230,118,0.1)', color: '#00e676' }}>✅ Mark WIN</button>
+          <button onClick={(e) => { e.stopPropagation(); onReport(entry.id, 'LOSS'); }} className="flex-1 py-1.5 rounded-xl text-[10px] font-bold active:scale-95 transition-transform flex items-center justify-center gap-1" style={{ background: 'rgba(255,82,82,0.1)', color: '#ff5252' }}>❌ Mark LOSS</button>
         </div>
       )}
     </div>
   );
 }
+
 
 function StatCard({ label, value, color }: { label: string; value: number | string; color: string }) {
   return (
-    <div className="md-surface p-3 text-center">
-      <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">{label}</div>
-      <div className="text-xl font-medium number-tabular" style={{ color }}>{value}</div>
+    <div className="rounded-2xl p-3 text-center" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.04)' }}>
+      <div className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mb-1.5 font-medium">{label}</div>
+      <div className="text-xl font-bold number-tabular" style={{ color, textShadow: `0 0 8px ${color}30` }}>{value}</div>
     </div>
   );
 }
-
 function SettingRow({ icon: Icon, iconColor, label, description, value, toggle, toggleValue, onToggle, onClick, isLast }: any) {
   return (
     <div className={cn("flex items-center gap-3 p-4", !isLast && "border-b border-[#3a3a3e]", onClick && "active:scale-95 transition-transform cursor-pointer")} onClick={onClick}>
