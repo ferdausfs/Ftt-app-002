@@ -443,7 +443,7 @@ export default function App() {
         try {
           const cleanPair = pair.replace(/\//g, '').toLowerCase();
           const res = await fetch(
-            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair)}&limit=50`,
+            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair)}&limit=500`,
             { signal: controller.signal },
           );
           if (!res.ok) continue;
@@ -579,7 +579,7 @@ export default function App() {
       // ── selected pair + window: one history call ──
       if (pairScope === 'selected') {
         const payload = await getJson(
-          `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(selectedPair))}&limit=50`);
+          `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(selectedPair))}&limit=500`);
         if (cancelled) return;
         const count = countWindowed(payload, cutoff);
         publish({
@@ -608,7 +608,7 @@ export default function App() {
       const settled = await Promise.all(pairs.map(async p => {
         try {
           const payload = await getJson(
-            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(p.pair))}&limit=50`);
+            `${API_BASE}/api/history?pair=${encodeURIComponent(cleanPair(p.pair))}&limit=500`);
           return { pair: p.pair, count: countWindowed(payload, cutoff) };
         } catch {
           return { pair: p.pair, count: null };

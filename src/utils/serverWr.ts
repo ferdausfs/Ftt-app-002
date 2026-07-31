@@ -6,7 +6,7 @@
  * App.tsx remains a single file.
  *
  * ── Data-coverage caveat, verified live 2026-07-29 ──────────────────────────
- * The worker keeps only MAX_SIGNALS_PER_PAIR = 50 history rows per pair and
+ * The worker keeps only MAX_SIGNALS_PER_PAIR = 500 history rows per pair and
  * `/api/history` supports no pagination (`offset`/`cursor`/`page` are ignored;
  * `limit` is capped at 50). So a windowed count derived from history is exact
  * only when the pair's oldest retained row predates the window cutoff.
@@ -194,7 +194,7 @@ export function countWindowed(payload: unknown, cutoff: number): WindowedCount {
 }
 
 /** Worker-side MAX_SIGNALS_PER_PAIR; /api/history cannot return more than this. */
-export const HISTORY_ROW_CAP = 50;
+export const HISTORY_ROW_CAP = 500;
 
 export interface CoverageSummary {
   complete: boolean;
