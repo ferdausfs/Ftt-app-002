@@ -783,8 +783,8 @@ export default function App() {
         {/* Loading */}
         {loading && !signalData && (
           <div className="space-y-3">
-            <div className="h-64 bg-[#1e1e23] rounded-2xl animate-pulse" />
-            <div className="h-32 bg-[#1e1e23] rounded-2xl animate-pulse" />
+            <div className="h-64 bg-[#1e1e23] rounded-2xl shimmer" />
+            <div className="h-32 bg-[#1e1e23] rounded-2xl shimmer" />
           </div>
         )}
 
@@ -809,7 +809,7 @@ export default function App() {
             
             {/* AI Insights */}
             {tradableSignalData.signal.aiValidation?.combined && (
-              <div className="md-surface p-4">
+              <div className="premium-card p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 rounded-lg bg-[#3a0069]/30 flex items-center justify-center">
@@ -869,7 +869,7 @@ export default function App() {
 
             {/* Structure Verdict */}
             {tradableSignalData.signal.structureVerdict && tradableSignalData.signal.structureVerdict.overall !== 'N/A' && (
-              <div className="md-surface p-4">
+              <div className="premium-card p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 rounded-lg bg-[#0288d1]/20 flex items-center justify-center">
@@ -943,7 +943,7 @@ export default function App() {
             )}
 
             {/* Sessions */}
-            <div className="md-surface p-4">
+            <div className="premium-card p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Globe2 className="w-4 h-4 text-[#42a5f5]" />
                 <span className="text-sm font-medium">Market Sessions</span>
@@ -966,7 +966,7 @@ export default function App() {
             </div>
 
             {/* Entry Reason */}
-            <div className="md-surface p-4">
+            <div className="premium-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Zap className="w-4 h-4 text-[#ffb74d]" />
                 <span className="text-sm font-medium">Entry Reasoning</span>
@@ -975,7 +975,7 @@ export default function App() {
             </div>
 
             {/* Market Regime */}
-            <div className="md-surface p-4">
+            <div className="premium-card p-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <TrendIcon className="w-4 h-4 text-[#42a5f5]" />
@@ -995,7 +995,7 @@ export default function App() {
         {/* ANALYSIS TAB */}
         {activeTab === 'analysis' && tradableSignalData && (
           <div className="space-y-3 fade-in">
-            <div className="md-surface p-4">
+            <div className="premium-card p-4">
               <div className="flex items-center gap-2 mb-1">
                 <Layers className="w-4 h-4 text-[#42a5f5]" />
                 <span className="text-sm font-medium">Multi-Timeframe Analysis</span>
@@ -1217,7 +1217,7 @@ function MarketClosedCard({ data, onSwitchPair }: { data: SignalData; onSwitchPa
 
   return (
     <div className="space-y-3 fade-in">
-      <div className="md-surface-highest p-0 overflow-hidden scale-in border border-[#4dd0e1]/10">
+      <div className="premium-card p-0 overflow-hidden scale-in border border-[#4dd0e1]/10">
         <div className="h-1.5 w-full bg-gradient-to-r from-[#4dd0e1] via-[#26a69a] to-[#42a5f5]" />
         <div className="p-5">
           <div className="flex items-start justify-between gap-3 mb-5">
@@ -1419,7 +1419,7 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
   const aiBadge = aiStatusBadge(deriveAiStatus(data));
 
   return (
-    <div className="md-surface-highest p-0 overflow-hidden scale-in">
+    <div className="premium-card p-0 overflow-hidden scale-in">
       <div className={cn("h-1.5 w-full", isBuy ? "bg-gradient-to-r from-[#81c784] to-[#4caf50]" : isSell ? "bg-gradient-to-r from-[#ef5350] to-[#f44336]" : "bg-gradient-to-r from-[#bdbdbd] to-[#9e9e9e]")} />
       <div className="p-5">
         <div className="flex items-center justify-between mb-4">
@@ -1522,7 +1522,7 @@ function TimeframeCard({ tf, rec }: { tf: string; rec: TimeframeRec }) {
   const upPercent = rec.score.up + rec.score.down > 0 ? (rec.score.up / (rec.score.up + rec.score.down)) * 100 : 50;
 
   return (
-    <div className="md-surface p-4">
+    <div className="premium-card p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
           <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", isBuy ? "bg-[#81c784]/15" : isSell ? "bg-[#ef5350]/15" : "bg-[#bdbdbd]/15")}>
@@ -1574,7 +1574,7 @@ function IndicatorGrid({ recommendations, timeframeAnalysis, selectedTF, onSelec
 
       {indicators && (
         <>
-          <div className="md-surface p-4">
+          <div className="premium-card p-4">
             <div className="flex items-center gap-2 mb-3"><Gauge className="w-4 h-4 text-[#42a5f5]" /><span className="text-sm font-medium">Momentum</span></div>
             <div className="space-y-3">
               <GaugeBar label="RSI" value={parseFloat(indicators.rsi)} />
@@ -1583,7 +1583,7 @@ function IndicatorGrid({ recommendations, timeframeAnalysis, selectedTF, onSelec
             </div>
           </div>
 
-          <div className="md-surface p-4">
+          <div className="premium-card p-4">
             <div className="flex items-center gap-2 mb-3"><TrendIcon className="w-4 h-4 text-[#81c784]" /><span className="text-sm font-medium">Trend (EMA)</span></div>
             <div className="grid grid-cols-3 gap-2 mb-3">
               <MiniStat label="EMA 5" value={indicators.ema5} />
@@ -1593,7 +1593,7 @@ function IndicatorGrid({ recommendations, timeframeAnalysis, selectedTF, onSelec
             <div className={cn("px-3 py-2 rounded-lg text-center text-xs font-medium", indicators.emaAlignment === 'FULL_BULL_STACK' ? "bg-[#81c784]/15 text-[#81c784]" : indicators.emaAlignment === 'FULL_BEAR_STACK' ? "bg-[#ef5350]/15 text-[#ef5350]" : "bg-[#27272d] text-[#b0b3b8]")}>{indicators.emaAlignment?.replace(/_/g, ' ')}</div>
           </div>
 
-          <div className="md-surface p-4">
+          <div className="premium-card p-4">
             <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-[#b39ddb]" /><span className="text-sm font-medium">MACD</span></div>
             <div className="grid grid-cols-3 gap-2">
               <MiniStat label="Line" value={indicators.macdLine} />
@@ -1602,7 +1602,7 @@ function IndicatorGrid({ recommendations, timeframeAnalysis, selectedTF, onSelec
             </div>
           </div>
 
-          <div className="md-surface p-4">
+          <div className="premium-card p-4">
             <div className="flex items-center gap-2 mb-3"><Zap className="w-4 h-4 text-[#ffb74d]" /><span className="text-sm font-medium">ADX</span></div>
             <div className="grid grid-cols-3 gap-2">
               <MiniStat label="ADX" value={indicators.adx} color={parseFloat(indicators.adx) > 25 ? '#81c784' : '#bdbdbd'} />
@@ -1678,7 +1678,7 @@ function HistoryRow({ entry, onReport, onDelete, onDetail, isLast }: { entry: Hi
 
   return (
     <div
-      className={cn("p-4 transition-colors select-none cursor-pointer active:bg-[#27272d]/50", !isLast && "border-b border-[#3a3a3e]", pressing && "bg-[#ef5350]/5")}
+      className={cn("p-4 transition-colors select-none cursor-pointer active:bg-[#27272d]/50 rounded-xl mb-1", !isLast && "border-b border-[#3a3a3e]/30", pressing && "bg-[#ef5350]/5", entry.result === 'WIN' && "history-card-win", entry.result === 'LOSS' && "history-card-loss", (!entry.result || entry.result === 'PENDING') && "history-card-pending")}
       onClick={() => { if (!confirmDelete) onDetail(entry); }}
       onTouchStart={startPress}
       onTouchEnd={cancelPress}
