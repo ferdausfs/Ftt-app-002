@@ -734,33 +734,37 @@ export default function App() {
     : null;
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-[#e3e2e6] gradient-mesh">
-      {/* Top App Bar */}
-      <header className="sticky top-0 z-40 bg-[#09090b]/80 backdrop-blur-xl border-b border-[#3a3a3e]/50">
-        <div className="px-4 py-3">
+    <div className="min-h-screen bg-[#08080a] text-[#e3e2e6] gradient-mesh">
+      {/* ── Premium App Bar ── */}
+      <header className="sticky top-0 z-40" style={{ background: 'rgba(8,8,10,0.7)', backdropFilter: 'blur(24px) saturate(180%)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+        <div className="px-4 py-2.5 safe-top">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#4dd0e1] to-[#26a69a] flex items-center justify-center shadow-lg">
-                <Sparkles className="w-5 h-5 text-[#00363a]" />
+              <div className="relative">
+                <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #4dd0e1, #26a69a)', boxShadow: '0 4px 16px rgba(77,208,225,0.25)' }}>
+                  <Sparkles className="w-5 h-5 text-[#00363a]" />
+                </div>
+                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#00e676] border-2 border-[#08080a]" style={{ boxShadow: '0 0 6px #00e676' }} />
               </div>
               <div>
-                <h1 className="font-medium text-lg leading-tight">Signal<span className="text-[#4dd0e1]">Pro</span></h1>
-                <p className="text-[11px] text-[#b0b3b8]">AI Trading Intelligence</p>
+                <h1 className="font-bold text-[17px] leading-tight tracking-tight">Signal<span style={{ color: '#4dd0e1' }}>Pro</span></h1>
+                <p className="text-[9px] text-[#6e6e73] uppercase tracking-[0.15em] font-medium">AI Trading Intelligence</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
               {autoRefresh && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-[#1e1e23] rounded-full">
-                  <div className="w-2 h-2 rounded-full bg-[#81c784] animate-pulse" />
-                  <span className="text-xs text-[#b0b3b8] font-medium number-tabular">{refreshCountdown}s</span>
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl" style={{ background: 'rgba(0,230,118,0.06)' }}>
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#00e676]" style={{ boxShadow: '0 0 4px #00e676', animation: 'pulse 2s infinite' }} />
+                  <span className="text-[10px] text-[#81c784] font-bold number-tabular">{refreshCountdown}s</span>
                 </div>
               )}
-              <button 
+              <button
                 onClick={() => fetchSignal()}
                 disabled={loading}
-                className="w-10 h-10 rounded-full bg-[#1e1e23] flex items-center justify-center active:scale-90 transition-transform"
+                className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-90 transition-transform"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.04)' }}
               >
-                <RefreshCw className={cn("w-5 h-5", loading && "animate-spin")} />
+                <RefreshCw className={cn("w-[18px] h-[18px] text-[#b0b3b8]", loading && "animate-spin")} />
               </button>
             </div>
           </div>
@@ -1147,9 +1151,9 @@ export default function App() {
         )}
       </main>
 
-      {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 bg-[#09090b]/90 backdrop-blur-xl border-t border-[#3a3a3e]/50">
-        <div className="flex items-center justify-around py-2">
+      {/* ── Premium Bottom Navigation ── */}
+      <nav className="fixed bottom-0 left-0 right-0 z-50 safe-bottom" style={{ background: 'rgba(8,8,10,0.85)', backdropFilter: 'blur(24px) saturate(180%)', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+        <div className="flex items-center justify-around py-1.5">
           <NavButton icon={TrendingUp} label="Signal" active={activeTab === 'home'} onClick={() => setActiveTab('home')} />
           <NavButton icon={Radar} label="Scanner" active={activeTab === 'scanner'} onClick={() => setActiveTab('scanner')} />
           <NavButton icon={BarChart3} label="Analysis" active={activeTab === 'analysis'} onClick={() => setActiveTab('analysis')} />
@@ -1902,12 +1906,13 @@ function SettingRow({ icon: Icon, iconColor, label, description, value, toggle, 
 
 function NavButton({ icon: Icon, label, active, onClick, badge }: { icon: any; label: string; active: boolean; onClick: () => void; badge?: number }) {
   return (
-    <button onClick={onClick} className={cn("flex flex-col items-center gap-1 px-4 py-2 active:scale-90 transition-transform relative", active ? "text-[#4dd0e1]" : "text-[#6e6e73]")}>
-      <Icon className="w-6 h-6" strokeWidth={active ? 2.5 : 2} />
-      <span className="text-[10px] font-medium">{label}</span>
+    <button onClick={onClick} className={cn("flex flex-col items-center gap-0.5 px-3 py-1.5 active:scale-90 transition-transform relative", active ? "text-[#4dd0e1]" : "text-[#6e6e73]")} style={active ? { filter: 'drop-shadow(0 0 4px rgba(77,208,225,0.3))' } : {}}>
+      {active && <div className="absolute -top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full" style={{ background: '#4dd0e1', boxShadow: '0 0 6px #4dd0e1' }} />}
+      <Icon className="w-[22px] h-[22px]" strokeWidth={active ? 2.5 : 1.8} />
+      <span className="text-[9px] font-medium tracking-wide">{label}</span>
       {badge !== undefined && badge > 0 && (
-        <div className="absolute top-1 right-2 min-w-[16px] h-[16px] px-1 bg-[#ef5350] rounded-full flex items-center justify-center">
-          <span className="text-[9px] text-white font-medium">{badge}</span>
+        <div className="absolute top-0 right-1.5 min-w-[15px] h-[15px] px-1 rounded-full flex items-center justify-center" style={{ background: '#ff5252', boxShadow: '0 0 4px rgba(255,82,82,0.4)' }}>
+          <span className="text-[8px] text-white font-bold">{badge}</span>
         </div>
       )}
     </button>
