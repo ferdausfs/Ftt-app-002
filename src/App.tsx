@@ -43,6 +43,9 @@ import {
   PairScope, TimeRange, StatsPairRow, CoverageSummary,
 } from './utils/serverWr';
 
+// Premium UI components (#1-7)
+import { ConfidenceGauge, ConfluenceBar, FilterBadges, SignalStrengthBars, DirectionPill } from './components/Premium';
+
 interface HistoryEntry {
   id: string;
   pair: string;
@@ -1469,6 +1472,9 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
             </div>
           )}
         </div>
+
+        {/* Premium #4: filter/block reason transparency (D2 + all filtersApplied) */}
+        <FilterBadges filters={data.signal.filtersApplied} />
 
         {entryPrice && (
           <div className="grid grid-cols-3 gap-3 pt-4 border-t border-[#3a3a3e]">
