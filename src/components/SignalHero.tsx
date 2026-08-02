@@ -2,6 +2,7 @@ import { ArrowUpRight, ArrowDownRight, Minus, ChevronDown } from 'lucide-react';
 import { SignalData } from '../types';
 import { cn } from '../utils/cn';
 import { CircularCountdown } from './CountdownTimer';
+import { deriveAiStatus, aiStatusBadge } from '../utils/signalMeta';
 
 interface Props {
   data: SignalData;
@@ -118,6 +119,47 @@ export function SignalHero({ data, onPairClick }: Props) {
           </div>
         )}
       </div>
+
+      {/* Premium meta chips — AI consensus, regime, alignment, structure */}
+      {(aiStatusBadge(deriveAiStatus(data)) || data.signal.marketRegime || data.signal.alignment || data.signal.structureVerdict?.overall) && (
+        <div className="relative mt-4 flex flex-wrap gap-2">
+          {aiStatusBadge(deriveAiStatus(data)) && (
+            <span className={cn("text-[10px] font-bold px-2.5 py-1 rounded-lg", aiStatusBadge(deriveAiStatus(data))!.className)}>
+              {aiStatusBadge(deriveAiStatus(data))!.label}
+            </span>
+          )}
+          {data.signal.marketRegime && (
+            <span className={cn(
+              "text-[10px] font-bold px-2.5 py-1 rounded-lg",
+              data.signal.marketRegime === 'TRENDING' && "bg-[#81c784]/15 text-[#81c784]",
+              data.signal.marketRegime === 'RANGING' && "bg-[#ffb74d]/15 text-[#ffb74d]"
+            )}>
+              {data.signal.marketRegime}
+            </span>
+          )}
+          {data.signal.alignment && (
+            <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#42a5f5]/15 text-[#64b5f6]">
+              {data.signal.alignment}
+            </span>
+          )}
+          {data.signal.structureVerdict?.overall && (
+            <span className={cn(
+              "text-[10px] font-bold px-2.5 py-1 rounded-lg",
+              data.signal.structureVerdict.overall === 'ALIGNED' && "bg-[#81c784]/15 text-[#81c784]",
+              data.signal.structureVerdict.overall === 'AGAINST' && "bg-[#ff5252]/15 text-[#ff5252]",
+              (data.signal.structureVerdict.overall === 'MIXED' || data.signal.structureVerdict.overall === 'NEUTRAL') && "bg-[#ffb74d]/15 text-[#ffb74d]",
+              data.signal.structureVerdict.overall === 'N/A' && "bg-white/10 text-white/60"
+            )}>
+              Structure {data.signal.structureVerdict.overall}
+            </span>
+          )}
+          {typeof best?.confluence === 'number' && best.confluence > 0 && (
+            <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#b39ddb]/15 text-[#b39ddb]">
+              Confluence {best.confluence}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Entry info */}
       {entryPrice && (

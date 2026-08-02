@@ -16,13 +16,12 @@ import {
   BarChart3,
   History,
   Settings,
-  CheckCircle2,
-  XCircle,
   Globe2,
   Activity,
   Gauge,
   Radar,
-  TrendingUp as TrendIcon
+  TrendingUp as TrendIcon,
+  LayoutGrid
 } from 'lucide-react';
 import { SignalData, TimeframeRec } from './types';
 import { cn } from './utils/cn';
@@ -44,8 +43,10 @@ import {
 } from './utils/serverWr';
 
 // Premium UI components (#1-7)
-import { ConfidenceGauge, ConfluenceBar, FilterBadges, SignalStrengthBars, DirectionPill } from './components/Premium';
+import { FilterBadges } from './components/Premium';
 import { HistoryDetailModal } from './components/HistoryDetailModal';
+import { Ticker } from './components/Ticker';
+import { DashboardView } from './components/DashboardView';
 
 interface HistoryEntry {
   id: string;
@@ -126,7 +127,7 @@ interface ServerStatsState {
   retryable?: boolean;
 }
 
-type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner';
+type Tab = 'home' | 'analysis' | 'history' | 'settings' | 'scanner' | 'board';
 
 const DEFAULT_FAVORITES = ['EUR/USD', 'GBP/USD', 'BTC/USD'];
 
@@ -773,6 +774,13 @@ export default function App() {
 
       {/* Main Content */}
       <main className="px-4 py-4 pb-24">
+        {/* UI v3: market pulse ticker (home only, full-bleed) */}
+        {activeTab === 'home' && (
+          <div className="-mx-4 -mt-4 mb-3">
+            <Ticker />
+          </div>
+        )}
+
         {/* Error */}
         {error && (
           <div className="mb-3 flex items-center gap-3 p-4 bg-[#93000a]/20 border border-[#93000a]/30 rounded-2xl">
@@ -1028,6 +1036,11 @@ export default function App() {
           <ScannerView onSignalClick={handleScannerSignalClick} />
         )}
 
+        {/* BOARD TAB (UI v3 premium dashboard) */}
+        {activeTab === 'board' && (
+          <DashboardView onPairSelect={(pair) => { setSelectedPair(pair); setActiveTab('home'); }} />
+        )}
+
         {/* HISTORY TAB */}
         {activeTab === 'history' && (
           <div className="fade-in">
@@ -1085,8 +1098,8 @@ export default function App() {
                   <p className="text-[#6e6e73] text-sm">Generated signals will appear here</p>
                 </div>
               ) : (
-                history.slice(0, 30).map((entry, idx) => (
-                  <HistoryRow key={entry.id} entry={entry} onReport={handleReport} onDelete={(id) => setHistory(prev => prev.filter(h => h.id !== id))} onDetail={(e) => setDetailEntry(e)} isLast={idx === Math.min(history.length, 30) - 1} />
+                history.slice(0, 30).map((entry) => (
+                  <HistoryRow key={entry.id} entry={entry} onReport={handleReport} onDelete={(id) => setHistory(prev => prev.filter(h => h.id !== id))} onDetail={(e) => setDetailEntry(e)} />
                 ))
               )}
             </div>
@@ -1156,6 +1169,7 @@ export default function App() {
         <div className="flex items-center justify-around py-1.5">
           <NavButton icon={TrendingUp} label="Signal" active={activeTab === 'home'} onClick={() => setActiveTab('home')} />
           <NavButton icon={Radar} label="Scanner" active={activeTab === 'scanner'} onClick={() => setActiveTab('scanner')} />
+          <NavButton icon={LayoutGrid} label="Board" active={activeTab === 'board'} onClick={() => setActiveTab('board')} />
           <NavButton icon={BarChart3} label="Analysis" active={activeTab === 'analysis'} onClick={() => setActiveTab('analysis')} />
           <NavButton icon={History} label="History" active={activeTab === 'history'} onClick={() => setActiveTab('history')} badge={pendingCount} />
           <NavButton icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
@@ -1694,7 +1708,7 @@ function MiniStat({ label, value, color }: { label: string; value: string | numb
   );
 }
 
-function HistoryRow({ entry, onReport, onDelete, onDetail, isLast }: { entry: HistoryEntry; onReport: (id: string, result: 'WIN' | 'LOSS') => void; onDelete: (id: string) => void; onDetail: (entry: HistoryEntry) => void; isLast: boolean }) {
+function HistoryRow({ entry, onReport, onDelete, onDetail }: { entry: HistoryEntry; onReport: (id: string, result: 'WIN' | 'LOSS') => void; onDelete: (id: string) => void; onDetail: (entry: HistoryEntry) => void }) {
   const isBuy = entry.direction === 'BUY';
   const isPending = !entry.result || entry.result === 'PENDING';
   const isReportable = entry.reportable !== false;
