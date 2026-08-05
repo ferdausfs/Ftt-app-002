@@ -29,7 +29,7 @@ export function HistoryDetailModal({ entry, onClose }: { entry: HistoryDetail | 
   const isBuy = entry.direction === 'BUY';
   const isWin = entry.result === 'WIN';
   const isLoss = entry.result === 'LOSS';
-  const resultColor = isWin ? '#81c784' : isLoss ? '#ef5350' : '#ffb74d';
+  const resultColor = isWin ? 'var(--c-buy)' : isLoss ? 'var(--c-sell)' : 'var(--c-warn)';
   const resultLabel = isWin ? '✅ WIN' : isLoss ? '❌ LOSS' : '⏳ PENDING';
 
   // P&L calculation
@@ -44,22 +44,22 @@ export function HistoryDetailModal({ entry, onClose }: { entry: HistoryDetail | 
     <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
-        className="relative w-full max-w-md md-bottom-sheet p-5 pb-8 slide-up"
+        className="relative w-full max-w-md sheet-surface rounded-t-[28px] p-5 pb-8 slide-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Handle */}
         <div className="w-10 h-1 rounded-full bg-[#4a4a4f] mx-auto mb-4" />
 
         {/* Close */}
-        <button onClick={onClose} className="absolute top-4 right-4 w-8 h-8 rounded-lg bg-[#27272d] flex items-center justify-center active:scale-90 transition-transform">
+        <button onClick={onClose} aria-label="Close details" className="absolute top-4 right-4 w-8 h-8 rounded-lg bg-[#27272d] flex items-center justify-center active:scale-95 transition-transform">
           <X className="w-4 h-4 text-[#b0b3b8]" />
         </button>
 
         {/* Header: pair + result */}
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
-            <div className={cn('w-12 h-12 rounded-xl flex items-center justify-center', isBuy ? 'bg-[#81c784]/15' : 'bg-[#ef5350]/15')}>
-              <span className={cn('text-xl font-bold', isBuy ? 'text-[#81c784]' : 'text-[#ef5350]')}>{isBuy ? '▲' : '▼'}</span>
+            <div className={cn('w-12 h-12 rounded-xl flex items-center justify-center', isBuy ? 'bg-[var(--c-buy)]/15' : 'bg-[var(--c-sell)]/15')}>
+              <span className={cn('text-xl font-bold', isBuy ? 'text-[var(--c-buy)]' : 'text-[var(--c-sell)]')}>{isBuy ? '▲' : '▼'}</span>
             </div>
             <div>
               <div className="text-lg font-bold">{entry.pair}</div>
@@ -79,7 +79,7 @@ export function HistoryDetailModal({ entry, onClose }: { entry: HistoryDetail | 
           </div>
           <div className="md-surface-variant p-3">
             <div className="text-xs text-[#8e9099] mb-1">Exit Price</div>
-            <div className={cn('text-lg font-medium number-tabular', isWin ? 'text-[#81c784]' : isLoss ? 'text-[#ef5350]' : '')}>
+            <div className={cn('text-lg font-medium number-tabular', isWin ? 'text-[var(--c-buy)]' : isLoss ? 'text-[var(--c-sell)]' : '')}>
               {entry.exitPrice?.toLocaleString() ?? '—'}
             </div>
           </div>
@@ -89,7 +89,7 @@ export function HistoryDetailModal({ entry, onClose }: { entry: HistoryDetail | 
         {pnl && (
           <div className="mb-4 p-3 rounded-xl bg-[#27272d] flex items-center justify-between">
             <span className="text-xs text-[#8e9099]">Price Move</span>
-            <span className={cn('text-sm font-bold number-tabular', parseFloat(pnl) >= 0 ? 'text-[#81c784]' : 'text-[#ef5350]')}>
+            <span className={cn('text-sm font-bold number-tabular', parseFloat(pnl) >= 0 ? 'text-[var(--c-buy)]' : 'text-[var(--c-sell)]')}>
               {pnl}
             </span>
           </div>

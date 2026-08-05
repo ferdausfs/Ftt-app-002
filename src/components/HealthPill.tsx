@@ -46,8 +46,8 @@ export function HealthPill() {
     <div className="md-surface overflow-hidden mb-4">
       <div className="flex items-center justify-between p-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#81c784]/15 flex items-center justify-center">
-            <Activity className="w-5 h-5 text-[#81c784]" />
+          <div className="w-10 h-10 rounded-xl bg-[var(--c-buy)]/15 flex items-center justify-center">
+            <Activity className="w-5 h-5 text-[var(--c-buy)]" />
           </div>
           <div>
             <div className="font-medium text-sm">Worker Health</div>
@@ -59,13 +59,13 @@ export function HealthPill() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1e1e23] rounded-full">
-            <KeyRound className="w-3 h-3 text-[#42a5f5]" />
+            <KeyRound className="w-3 h-3 text-[var(--c-info)]" />
             <span className="text-xs text-[#b0b3b8] number-tabular">
               {typeof keys === 'number' ? keys : '—'} keys
             </span>
           </div>
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1e1e23] rounded-full">
-            <Gauge className="w-3 h-3 text-[#ffb74d]" />
+            <Gauge className="w-3 h-3 text-[var(--c-warn)]" />
             <span className="text-xs text-[#b0b3b8] number-tabular">
               {typeof quota === 'number' ? quota.toLocaleString() : '—'}
             </span>

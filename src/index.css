@@ -50,6 +50,35 @@
     --md-sys-elevation-1: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15);
     --md-sys-elevation-2: 0 1px 2px rgba(0,0,0,0.3), 0 2px 6px 2px rgba(0,0,0,0.15);
     --md-sys-elevation-3: 0 4px 8px 3px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.3);
+
+    /* ────────────────────────────────────────────────────────────────
+       Semantic palette — single source of truth for the whole app.
+       Every live screen maps onto these; the old scattered hexes
+       (#81c784/#30d158/#4caf50 greens, #ef5350/#ff453a/#c62828 reds,
+       #0a84ff/#64b5f6 blues, …) are aliases of these, never rivals.
+       ──────────────────────────────────────────────────────────────── */
+    --c-buy: #00e676;        /* BUY / WIN / positive */
+    --c-sell: #ff5252;       /* SELL / LOSS / negative */
+    --c-warn: #ffb74d;       /* pending / caution / mixed */
+    --c-info: #42a5f5;       /* informational blue */
+    --c-otc: #ff9800;        /* OTC orange */
+    --c-accent: #4dd0e1;     /* brand primary teal */
+    --c-purple: #b39ddb;     /* AI / premium purple */
+
+    /* Text tiers (dark surface) */
+    --t-high: #e3e2e6;
+    --t-mid: #b0b3b8;
+    --t-low: #8e9099;
+    --t-faint: #6e6e73;
+
+    /* RGB triplets for alpha tints: rgba(var(--rgb-buy), 0.12) */
+    --rgb-buy: 0, 230, 118;
+    --rgb-sell: 255, 82, 82;
+    --rgb-warn: 255, 183, 77;
+    --rgb-info: 66, 165, 245;
+    --rgb-otc: 255, 152, 0;
+    --rgb-accent: 77, 208, 225;
+    --rgb-purple: 179, 157, 219;
   }
   
   * {
@@ -75,6 +104,22 @@
     scrollbar-width: none;
     -ms-overflow-style: none;
   }
+
+  /* Keyboard focus: the app is touch-first, but every button must still
+     reveal a focus ring for keyboard/switch users. */
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* Desktop refinement: gentle brightness lift on buttons. Touch devices
+     already get active:scale feedback; hover is an additive layer only. */
+  @media (hover: hover) {
+    button:not(:disabled):hover {
+      filter: brightness(1.08);
+    }
+  }
 }
 
 @layer utilities {
@@ -92,6 +137,51 @@
   .md-surface-highest {
     background: var(--md-sys-color-surface-container-highest);
     border-radius: 16px;
+  }
+
+  /* ── Design-system utilities (visual polish pass) ────────────────── */
+
+  /* One label language: uppercase micro-label. Replaces the scattered
+     8–9px/tracking/uppercase combinations across screens. */
+  .label-caption {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--t-low);
+  }
+
+  /* Grouped list surface (History list, Settings groups, Scanner list). */
+  .surface-group {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 20px;
+    overflow: hidden;
+  }
+
+  /* iOS-style grouped card — used by the pair picker; defined here so the
+     live components that reference it get a real surface. */
+  .ios-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  /* Bottom-sheet surface with blur — replaces the never-defined
+     ios-blur-strong / bare md-bottom-sheet usage. Callers set the radius. */
+  .sheet-surface {
+    background: rgba(20, 20, 23, 0.96);
+    backdrop-filter: blur(28px) saturate(160%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Standard touch press feedback (was referenced but never defined). */
+  .haptic-tap {
+    transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1);
+  }
+  .haptic-tap:active {
+    transform: scale(0.97);
   }
   
   /* Material Buttons */
@@ -478,6 +568,15 @@
 }
 .ticker-track:hover { animation-play-state: paused; }
 
+/* Soft edge fade so items never hard-clip against the screen edge */
+.ticker-fade {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ticker-track { animation: none; }
+  .shimmer { animation: none; }
+  .fade-in, .slide-up, .scale-in, .slide-in-right { animation: none; }
+  .haptic-tap:active { transform: none; }
 }

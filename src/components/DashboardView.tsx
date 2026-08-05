@@ -140,7 +140,7 @@ export function DashboardView({ onPairSelect }: Props) {
     new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   const skeleton = Array.from({ length: 6 }, (_, i) => (
-    <div key={i} className="h-[118px] rounded-[18px] shimmer" style={{ background: '#1e1e23' }} />
+    <div key={i} className="h-[118px] rounded-[20px] shimmer" style={{ background: '#1e1e23' }} />
   ));
 
   return (
@@ -161,7 +161,7 @@ export function DashboardView({ onPairSelect }: Props) {
         <button
           onClick={() => run(true)}
           disabled={loading}
-          className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-90 transition-transform"
+          className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.05)' }}
         >
           <RefreshCw className={cn('w-4 h-4 text-[#b0b3b8]', loading && 'animate-spin')} />
@@ -184,7 +184,7 @@ export function DashboardView({ onPairSelect }: Props) {
                 key={p.pair}
                 onClick={() => p.direction === 'BUY' || p.direction === 'SELL' ? onPairSelect?.(p.pair) : undefined}
                 className={cn(
-                  'rounded-[18px] p-3 transition-transform',
+                  'rounded-[20px] p-3 transition-transform',
                   (isBuy || isSell) ? 'active:scale-[0.97] cursor-pointer' : '',
                 )}
                 style={{
@@ -196,7 +196,7 @@ export function DashboardView({ onPairSelect }: Props) {
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-[13px]">{p.pair}</span>
                   {live && (
-                    <span className="text-[8px] font-black tracking-widest px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(77,208,225,0.15)', color: '#4dd0e1' }}>
+                    <span className="text-[9px] font-black tracking-widest px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(77,208,225,0.15)', color: '#4dd0e1' }}>
                       LIVE
                     </span>
                   )}
@@ -223,7 +223,7 @@ export function DashboardView({ onPairSelect }: Props) {
                   />
                 </div>
 
-                <div className="flex items-center justify-between text-[9px] text-[#8e9099] number-tabular">
+                <div className="flex items-center justify-between text-[10px] text-[#8e9099] number-tabular">
                   <span>
                     {p.ok ? (
                       <>WR <b style={{ color: '#e3e2e6' }}>{wr !== null ? `${wr}%` : '—'}</b> · n={n ?? '—'}</>

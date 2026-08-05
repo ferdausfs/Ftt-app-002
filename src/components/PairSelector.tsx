@@ -52,8 +52,8 @@ export function PairSelector({ isOpen, onClose, selectedPair, onSelect, favorite
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm fade-in" />
       
       {/* Sheet */}
-      <div 
-        className="relative w-full max-w-lg ios-blur-strong rounded-t-3xl sm:rounded-3xl max-h-[85vh] flex flex-col slide-up"
+      <div
+        className="relative w-full max-w-lg sheet-surface rounded-t-3xl sm:rounded-3xl max-h-[85vh] flex flex-col slide-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Handle */}
@@ -64,8 +64,9 @@ export function PairSelector({ isOpen, onClose, selectedPair, onSelect, favorite
         {/* Header */}
         <div className="px-5 pt-2 pb-3 flex items-center justify-between">
           <h2 className="text-xl font-bold text-white">Select Pair</h2>
-          <button 
+          <button
             onClick={() => { haptic('light'); onClose(); }}
+            aria-label="Close pair picker"
             className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center haptic-tap"
           >
             <X className="w-4 h-4 text-white" />
@@ -81,6 +82,7 @@ export function PairSelector({ isOpen, onClose, selectedPair, onSelect, favorite
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search pairs..."
+              aria-label="Search pairs"
               className="w-full bg-white/10 rounded-xl py-2.5 pl-10 pr-4 text-white placeholder-white/40 focus:outline-none focus:bg-white/15 transition-colors"
             />
           </div>
@@ -184,9 +186,9 @@ function PairItem({
       <div className="flex items-center gap-3">
         <div className={cn(
           "w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold",
-          isOTC ? "bg-[#ff9f0a]/20 text-[#ff9f0a]" :
-          isCrypto ? "bg-[#bf5af2]/20 text-[#bf5af2]" :
-          "bg-[#0a84ff]/20 text-[#0a84ff]"
+          isOTC ? "bg-[var(--c-otc)]/15 text-[var(--c-otc)]" :
+          isCrypto ? "bg-[var(--c-purple)]/15 text-[var(--c-purple)]" :
+          "bg-[var(--c-info)]/15 text-[var(--c-info)]"
         )}>
           {isOTC ? 'OTC' : isCrypto ? '₿' : pair.slice(0, 2)}
         </div>
@@ -199,6 +201,7 @@ function PairItem({
       </div>
       <button
         onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }}
+        aria-label={isFavorite ? `Remove ${pair} from favorites` : `Add ${pair} to favorites`}
         className="w-8 h-8 rounded-full flex items-center justify-center haptic-tap"
       >
         <Star className={cn(

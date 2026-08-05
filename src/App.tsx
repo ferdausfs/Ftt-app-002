@@ -747,27 +747,28 @@ export default function App() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #4dd0e1, #26a69a)', boxShadow: '0 4px 16px rgba(77,208,225,0.25)' }}>
+                <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #4dd0e1, #26a69a)', boxShadow: '0 4px 16px rgba(var(--rgb-accent),0.25)' }}>
                   <Sparkles className="w-5 h-5 text-[#00363a]" />
                 </div>
                 <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#00e676] border-2 border-[#08080a]" style={{ boxShadow: '0 0 6px #00e676' }} />
               </div>
               <div>
                 <h1 className="font-bold text-[17px] leading-tight tracking-tight">Signal<span style={{ color: '#4dd0e1' }}>Pro</span></h1>
-                <p className="text-[9px] text-[#6e6e73] uppercase tracking-[0.15em] font-medium">AI Trading Intelligence</p>
+                <p className="text-[10px] text-[var(--t-low)] uppercase tracking-[0.15em] font-medium">AI Trading Intelligence</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
               {autoRefresh && (
                 <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl" style={{ background: 'rgba(0,230,118,0.06)' }}>
                   <div className="w-1.5 h-1.5 rounded-full bg-[#00e676]" style={{ boxShadow: '0 0 4px #00e676', animation: 'pulse 2s infinite' }} />
-                  <span className="text-[10px] text-[#81c784] font-bold number-tabular">{refreshCountdown}s</span>
+                  <span className="text-[10px] text-[var(--c-buy)] font-bold number-tabular">{refreshCountdown}s</span>
                 </div>
               )}
               <button
                 onClick={() => fetchSignal()}
                 disabled={loading}
-                className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-90 transition-transform"
+                aria-label="Refresh signal"
+                className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.04)' }}
               >
                 <RefreshCw className={cn("w-[18px] h-[18px] text-[#b0b3b8]", loading && "animate-spin")} />
@@ -800,7 +801,7 @@ export default function App() {
         {/* Loading */}
         {loading && !signalData && (
           <div className="space-y-3">
-            <div className="h-64 bg-[#1e1e23] rounded-2xl shimmer" />
+            <div className="h-64 bg-[#1e1e23] rounded-[24px] shimmer" />
             <div className="h-32 bg-[#1e1e23] rounded-2xl shimmer" />
           </div>
         )}
@@ -840,7 +841,7 @@ export default function App() {
                   <div className={cn(
                     "px-3 py-1 rounded-full text-xs font-medium",
                     tradableSignalData.signal.aiValidation.agrees 
-                      ? "bg-[#81c784]/20 text-[#81c784]" 
+                      ? "bg-[var(--c-buy)]/20 text-[var(--c-buy)]" 
                       : "bg-[#ffb74d]/20 text-[#ffb74d]"
                   )}>
                     {tradableSignalData.signal.aiValidation.combined.agreement === 'BOTH_AGREE' ? '✓ Both Agree' : tradableSignalData.signal.aiValidation.agrees ? '✓ Agree' : '⚠ Divergent'}
@@ -853,8 +854,8 @@ export default function App() {
                     if (!m) return null;
                     const ok = m.status === 'OK';
                     return (
-                      <div key={model} className={cn("flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium", ok ? "bg-[#81c784]/10 text-[#81c784]" : "bg-[#ef5350]/10 text-[#ef5350]")}>
-                        <div className={cn("w-1.5 h-1.5 rounded-full", ok ? "bg-[#81c784]" : "bg-[#ef5350]")} />
+                      <div key={model} className={cn("flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium", ok ? "bg-[var(--c-buy)]/10 text-[var(--c-buy)]" : "bg-[var(--c-sell)]/10 text-[var(--c-sell)]")}>
+                        <div className={cn("w-1.5 h-1.5 rounded-full", ok ? "bg-[var(--c-buy)]" : "bg-[var(--c-sell)]")} />
                         {model.charAt(0).toUpperCase() + model.slice(1)} {ok ? `${m.confidence}%` : m.status}
                       </div>
                     );
@@ -865,8 +866,8 @@ export default function App() {
                     <div className="text-xs text-[#b0b3b8] mb-1">AI Signal</div>
                     <div className={cn(
                       "text-lg font-medium",
-                      tradableSignalData.signal.aiValidation.combined.signal === 'BUY' && "text-[#81c784]",
-                      tradableSignalData.signal.aiValidation.combined.signal === 'SELL' && "text-[#ef5350]"
+                      tradableSignalData.signal.aiValidation.combined.signal === 'BUY' && "text-[var(--c-buy)]",
+                      tradableSignalData.signal.aiValidation.combined.signal === 'SELL' && "text-[var(--c-sell)]"
                     )}>{tradableSignalData.signal.aiValidation.combined.signal}</div>
                   </div>
                   <div className="bg-[#27272d] rounded-xl p-3">
@@ -889,8 +890,8 @@ export default function App() {
               <div className="premium-card p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-[#0288d1]/20 flex items-center justify-center">
-                      <Layers className="w-4 h-4 text-[#42a5f5]" />
+                    <div className="w-8 h-8 rounded-lg bg-[var(--c-info)]/20 flex items-center justify-center">
+                      <Layers className="w-4 h-4 text-[var(--c-info)]" />
                     </div>
                     <div>
                       <div className="text-sm font-medium">Market Structure</div>
@@ -899,10 +900,10 @@ export default function App() {
                   </div>
                   <div className={cn(
                     "px-3 py-1 rounded-full text-xs font-bold",
-                    tradableSignalData.signal.structureVerdict.overall === 'ALIGNED' && "bg-[#81c784]/20 text-[#81c784]",
-                    tradableSignalData.signal.structureVerdict.overall === 'AGAINST' && "bg-[#ef5350]/20 text-[#ef5350]",
+                    tradableSignalData.signal.structureVerdict.overall === 'ALIGNED' && "bg-[var(--c-buy)]/20 text-[var(--c-buy)]",
+                    tradableSignalData.signal.structureVerdict.overall === 'AGAINST' && "bg-[var(--c-sell)]/20 text-[var(--c-sell)]",
                     tradableSignalData.signal.structureVerdict.overall === 'MIXED' && "bg-[#ffb74d]/20 text-[#ffb74d]",
-                    tradableSignalData.signal.structureVerdict.overall === 'NEUTRAL' && "bg-[#bdbdbd]/20 text-[#bdbdbd]",
+                    tradableSignalData.signal.structureVerdict.overall === 'NEUTRAL' && "bg-[#9e9e9e]/20 text-[#9e9e9e]",
                   )}>
                     {tradableSignalData.signal.structureVerdict.overall === 'ALIGNED' && '✓ ALIGNED'}
                     {tradableSignalData.signal.structureVerdict.overall === 'AGAINST' && '✗ AGAINST'}
@@ -916,16 +917,16 @@ export default function App() {
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       "text-sm font-bold",
-                      tradableSignalData.signal.structureVerdict.direction === 'BUY' && "text-[#81c784]",
-                      tradableSignalData.signal.structureVerdict.direction === 'SELL' && "text-[#ef5350]",
-                      (tradableSignalData.signal.structureVerdict.direction === 'NEUTRAL' || tradableSignalData.signal.structureVerdict.direction === 'MIXED') && "text-[#bdbdbd]",
+                      tradableSignalData.signal.structureVerdict.direction === 'BUY' && "text-[var(--c-buy)]",
+                      tradableSignalData.signal.structureVerdict.direction === 'SELL' && "text-[var(--c-sell)]",
+                      (tradableSignalData.signal.structureVerdict.direction === 'NEUTRAL' || tradableSignalData.signal.structureVerdict.direction === 'MIXED') && "text-[#9e9e9e]",
                     )}>
                       {tradableSignalData.signal.structureVerdict.direction}
                     </span>
                     {tradableSignalData.signal.structureVerdict.strength !== 'NEUTRAL' && (
                       <span className={cn(
                         "text-[10px] px-2 py-0.5 rounded-full font-medium",
-                        tradableSignalData.signal.structureVerdict.strength === 'STRONG' ? "bg-[#42a5f5]/20 text-[#42a5f5]" : "bg-[#bdbdbd]/15 text-[#bdbdbd]"
+                        tradableSignalData.signal.structureVerdict.strength === 'STRONG' ? "bg-[var(--c-info)]/20 text-[var(--c-info)]" : "bg-[#9e9e9e]/15 text-[#9e9e9e]"
                       )}>
                         {tradableSignalData.signal.structureVerdict.strength}
                       </span>
@@ -936,18 +937,18 @@ export default function App() {
                   {Object.entries(tradableSignalData.signal.structureVerdict.perTimeframe).map(([tf, v]) => (
                     <div key={tf} className={cn(
                       "flex-1 text-center py-2 rounded-xl text-xs font-medium",
-                      v.verdict === 'AGREE' && "bg-[#81c784]/10 text-[#81c784]",
-                      v.verdict === 'DISAGREE' && "bg-[#ef5350]/10 text-[#ef5350]",
+                      v.verdict === 'AGREE' && "bg-[var(--c-buy)]/10 text-[var(--c-buy)]",
+                      v.verdict === 'DISAGREE' && "bg-[var(--c-sell)]/10 text-[var(--c-sell)]",
                       v.verdict === 'NEUTRAL' && "bg-[#27272d] text-[#b0b3b8]",
                     )}>
                       <div className="font-bold">{tf.toUpperCase()}</div>
                       <div className="text-[10px] mt-0.5 opacity-80">{v.bias?.replace('_', ' ')}</div>
-                      <div className="text-[9px] mt-0.5">{v.verdict}</div>
+                      <div className="text-[10px] mt-0.5">{v.verdict}</div>
                     </div>
                   ))}
                 </div>
                 {tradableSignalData.signal.structureVerdict.overall === 'AGAINST' && (
-                  <p className="mt-3 text-xs text-[#ef5350]/80 bg-[#ef5350]/10 rounded-lg p-2.5">
+                  <p className="mt-3 text-xs text-[var(--c-sell)]/80 bg-[var(--c-sell)]/10 rounded-lg p-2.5">
                     ⚠ Structure is against the signal — consider skipping or wait for structure to align.
                   </p>
                 )}
@@ -962,7 +963,7 @@ export default function App() {
             {/* Sessions */}
             <div className="premium-card p-4">
               <div className="flex items-center gap-2 mb-3">
-                <Globe2 className="w-4 h-4 text-[#42a5f5]" />
+                <Globe2 className="w-4 h-4 text-[var(--c-info)]" />
                 <span className="text-sm font-medium">Market Sessions</span>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -973,9 +974,9 @@ export default function App() {
                 ))}
                 <div className={cn(
                   "px-3 py-1.5 rounded-lg text-sm font-medium",
-                  tradableSignalData.session.quality === 'HIGH' && "bg-[#81c784]/20 text-[#81c784]",
+                  tradableSignalData.session.quality === 'HIGH' && "bg-[var(--c-buy)]/20 text-[var(--c-buy)]",
                   tradableSignalData.session.quality === 'MEDIUM' && "bg-[#ffb74d]/20 text-[#ffb74d]",
-                  tradableSignalData.session.quality === 'LOW' && "bg-[#ef5350]/20 text-[#ef5350]"
+                  tradableSignalData.session.quality === 'LOW' && "bg-[var(--c-sell)]/20 text-[var(--c-sell)]"
                 )}>
                   {tradableSignalData.session.quality} Quality
                 </div>
@@ -995,12 +996,12 @@ export default function App() {
             <div className="premium-card p-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <TrendIcon className="w-4 h-4 text-[#42a5f5]" />
+                  <TrendIcon className="w-4 h-4 text-[var(--c-info)]" />
                   <span className="text-sm font-medium">Market Regime</span>
                 </div>
                 <span className={cn(
                   "px-3 py-1 rounded-full text-xs font-medium",
-                  tradableSignalData.signal.marketRegime === 'TRENDING' && "bg-[#81c784]/20 text-[#81c784]",
+                  tradableSignalData.signal.marketRegime === 'TRENDING' && "bg-[var(--c-buy)]/20 text-[var(--c-buy)]",
                   tradableSignalData.signal.marketRegime === 'RANGING' && "bg-[#ffb74d]/20 text-[#ffb74d]"
                 )}>{tradableSignalData.signal.marketRegime}</span>
               </div>
@@ -1012,20 +1013,22 @@ export default function App() {
         {/* ANALYSIS TAB */}
         {activeTab === 'analysis' && tradableSignalData && (
           <div className="space-y-3 fade-in">
-            <div className="premium-card p-4">
-              <div className="flex items-center gap-2 mb-1">
-                <Layers className="w-4 h-4 text-[#42a5f5]" />
-                <span className="text-sm font-medium">Multi-Timeframe Analysis</span>
+            <div className="flex items-center gap-3 px-1 pt-1 pb-1">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-[var(--c-info)]/10">
+                <Layers className="w-4 h-4 text-[var(--c-info)]" />
               </div>
-              <p className="text-xs text-[#b0b3b8]">Signal strength across all timeframes</p>
+              <div>
+                <h2 className="text-[17px] font-bold leading-tight tracking-tight">Multi-Timeframe Analysis</h2>
+                <p className="text-[11px] text-[var(--t-low)]">Signal strength across all timeframes</p>
+              </div>
             </div>
 
             {Object.entries(tradableSignalData.signal.recommendations).map(([tf, rec]) => (
               <TimeframeCard key={tf} tf={tf} rec={rec} />
             ))}
 
-            <div className="mt-4 mb-2">
-              <h3 className="text-xs uppercase tracking-wider text-[#8e9099] font-medium px-1">Technical Indicators</h3>
+            <div className="mt-4 mb-2 px-1">
+              <h3 className="label-caption">Technical Indicators</h3>
             </div>
             <IndicatorGrid 
               recommendations={tradableSignalData.signal.recommendations}
@@ -1051,18 +1054,18 @@ export default function App() {
           <div className="fade-in">
             <div className="mb-4">
               <h2 className="text-[26px] font-bold mb-0.5 tracking-tight">Signal History</h2>
-              <p className="text-[11px] text-[#6e6e73] uppercase tracking-[0.15em] font-medium">Track your trading performance</p>
+              <p className="label-caption">Track your trading performance</p>
             </div>
             
             {/* Stats */}
             <div className="flex items-center justify-between mb-2 px-1">
-              <h3 className="text-xs uppercase tracking-wider text-[#8e9099] font-medium">Your Local History</h3>
-              <span className="text-[10px] text-[#6e6e73]">This device only</span>
+              <h3 className="label-caption">Your Local History</h3>
+              <span className="text-[10px] text-[var(--t-faint)]">This device only</span>
             </div>
             <div className="grid grid-cols-4 gap-2 mb-4">
-              <StatCard label="Total" value={history.length} color="#42a5f5" />
-              <StatCard label="Wins" value={wins} color="#81c784" />
-              <StatCard label="Losses" value={losses} color="#ef5350" />
+              <StatCard label="Total" value={history.length} color="var(--c-info)" />
+              <StatCard label="Wins" value={wins} color="var(--c-buy)" />
+              <StatCard label="Losses" value={losses} color="var(--c-sell)" />
               <StatCard label="Win %" value={`${winRate}%`} color="#ffb74d" />
             </div>
 
@@ -1095,12 +1098,12 @@ export default function App() {
             />
 
             {/* List */}
-            <div className="overflow-hidden" style={{ borderRadius: 20, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
+            <div className="surface-group">
               {history.length === 0 ? (
                 <div className="p-10 text-center">
-                  <Clock className="w-12 h-12 text-[#3a3a3e] mx-auto mb-3" />
+                  <Clock className="w-12 h-12 text-[#2a2a2f] mx-auto mb-3" />
                   <p className="text-[#b0b3b8] font-medium mb-1">No history yet</p>
-                  <p className="text-[#6e6e73] text-sm">Generated signals will appear here</p>
+                  <p className="text-[var(--t-low)] text-sm">Generated signals will appear here</p>
                 </div>
               ) : (
                 history.slice(0, 30).map((entry) => (
@@ -1125,15 +1128,15 @@ export default function App() {
           <div className="fade-in">
             <div className="mb-4">
               <h2 className="text-[26px] font-bold mb-0.5 tracking-tight">Settings</h2>
-              <p className="text-[11px] text-[#6e6e73] uppercase tracking-[0.15em] font-medium">Customize your experience</p>
+              <p className="label-caption">Customize your experience</p>
             </div>
 
             <HealthPill />
 
-            <div className="overflow-hidden mb-3" style={{ borderRadius: 20, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
+            <div className="surface-group mb-3">
               <SettingRow
                 icon={autoRefresh ? RefreshCw : Zap}
-                iconColor="#42a5f5"
+                iconColor="var(--c-info)"
                 label="Auto Refresh"
                 description="Update signals every 60s"
                 toggle
@@ -1159,10 +1162,10 @@ export default function App() {
               />
             </div>
 
-            <div className="overflow-hidden mb-3" style={{ borderRadius: 20, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
+            <div className="surface-group mb-3">
               <SettingRow
                 icon={Trash2}
-                iconColor="#ef5350"
+                iconColor="var(--c-sell)"
                 label="Clear History"
                 description={`${history.length} entries`}
                 onClick={() => setHistory([])}
@@ -1170,13 +1173,13 @@ export default function App() {
               />
             </div>
 
-            <div className="overflow-hidden" style={{ borderRadius: 20, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
-              <SettingRow icon={Info} iconColor="#42a5f5" label="Version" value="2.0.0" />
+            <div className="surface-group">
+              <SettingRow icon={Info} iconColor="var(--c-info)" label="Version" value="2.0.0" />
               <SettingRow icon={Code} iconColor="#b39ddb" label="API Method" value={signalData?.signal?.method?.split('_').slice(0, 2).join(' ') || 'v6.9.2'} isLast />
             </div>
 
             <div className="text-center py-8">
-              <div className="inline-flex items-center gap-2 text-xs text-[#6e6e73]">
+              <div className="inline-flex items-center gap-2 text-xs text-[var(--t-low)]">
                 <Code className="w-4 h-4" />
                 <span>SignalPro · AI Trading Intelligence</span>
               </div>
@@ -1258,7 +1261,7 @@ function MarketClosedCard({ data, onSwitchPair }: { data: SignalData; onSwitchPa
   return (
     <div className="space-y-3 fade-in">
       <div className="premium-card p-0 overflow-hidden scale-in border border-[#4dd0e1]/10">
-        <div className="h-1.5 w-full bg-gradient-to-r from-[#4dd0e1] via-[#26a69a] to-[#42a5f5]" />
+        <div className="h-1.5 w-full bg-gradient-to-r from-[#4dd0e1] via-[#26a69a] to-[var(--c-info)]" />
         <div className="p-5">
           <div className="flex items-start justify-between gap-3 mb-5">
             <div className="flex items-start gap-4">
@@ -1281,7 +1284,7 @@ function MarketClosedCard({ data, onSwitchPair }: { data: SignalData; onSwitchPa
           <div className="grid gap-3 mb-4">
             <div className="bg-[#1e1e23] rounded-2xl p-4 border border-[#3a3a3e]/60">
               <div className="flex items-center gap-2 text-xs text-[#b0b3b8] mb-2">
-                <Globe2 className="w-4 h-4 text-[#42a5f5]" />
+                <Globe2 className="w-4 h-4 text-[var(--c-info)]" />
                 <span>Next forex open</span>
               </div>
               <div className="text-base font-medium text-[#e3e2e6] leading-snug">
@@ -1353,18 +1356,18 @@ function ServerStatsCard({ state, selectedPair, onRetry }: {
   const truncated = aggregate?.coverage && !aggregate.coverage.complete;
 
   return (
-    <div className="md-surface p-4 mb-4 border border-[#42a5f5]/10">
+    <div className="premium-card p-4 mb-4 border border-[var(--c-info)]/10">
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-[#42a5f5]/15 flex items-center justify-center">
-            <BarChart3 className="w-4 h-4 text-[#42a5f5]" />
+          <div className="w-8 h-8 rounded-lg bg-[var(--c-info)]/15 flex items-center justify-center">
+            <BarChart3 className="w-4 h-4 text-[var(--c-info)]" />
           </div>
           <div>
             <div className="text-sm font-medium">Server Win Rate</div>
             <div className="text-xs text-[#8e9099]">{subtitle}</div>
           </div>
         </div>
-        {state.loading && <RefreshCw className="w-4 h-4 text-[#42a5f5] animate-spin" />}
+        {state.loading && <RefreshCw className="w-4 h-4 text-[var(--c-info)] animate-spin" />}
       </div>
 
       {state.fallbackNote && (
@@ -1374,34 +1377,40 @@ function ServerStatsCard({ state, selectedPair, onRetry }: {
       )}
 
       {state.loading && !hasStats ? (
-        <div className="rounded-xl bg-[#1e1e23] p-3 text-xs text-[#b0b3b8] flex items-center gap-2">
-          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-          {state.filter.pairScope === 'all' && windowed
-            ? 'Computing across all pairs…'
-            : 'Loading server stats…'}
+        <div className="space-y-2" role="status" aria-label="Loading server stats">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="h-[64px] bg-[#1e1e23] rounded-xl shimmer" />
+            <div className="h-[64px] bg-[#1e1e23] rounded-xl shimmer" />
+            <div className="h-[64px] bg-[#1e1e23] rounded-xl shimmer" />
+          </div>
+          <p className="text-[11px] text-[var(--t-low)] pl-1">
+            {state.filter.pairScope === 'all' && windowed
+              ? 'Computing across all pairs…'
+              : 'Loading server stats…'}
+          </p>
         </div>
       ) : hasStats ? (
         <>
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-[#1e1e23] rounded-xl p-3">
+            <div className="bg-[#1e1e23] rounded-2xl p-3">
               <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">Server Win %</div>
               <div className="text-lg font-medium number-tabular text-[#4dd0e1]">{formatServerWinRate(winRate)}</div>
             </div>
-            <div className="bg-[#1e1e23] rounded-xl p-3">
+            <div className="bg-[#1e1e23] rounded-2xl p-3">
               <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">{windowed ? 'Decided' : 'Signals'}</div>
               <div className="text-lg font-medium number-tabular">{signals ?? '—'}</div>
             </div>
-            <div className="bg-[#1e1e23] rounded-xl p-3">
+            <div className="bg-[#1e1e23] rounded-2xl p-3">
               <div className="text-[10px] text-[#b0b3b8] uppercase mb-1">W / L</div>
               <div className="text-lg font-medium number-tabular">
-                <span className="text-[#81c784]">{wins}</span>
-                <span className="text-[#6e6e73]"> / </span>
-                <span className="text-[#ef5350]">{losses}</span>
+                <span className="text-[var(--c-buy)]">{wins}</span>
+                <span className="text-[var(--t-low)]"> / </span>
+                <span className="text-[var(--c-sell)]">{losses}</span>
               </div>
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-[#6e6e73]">
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-[var(--t-low)]">
             {windowed && typeof aggregate?.recordsConsidered === 'number' && (
               <span>Filtered from {aggregate.recordsConsidered} recent records · {TIME_RANGE_LABEL[state.filter.timeRange]}</span>
             )}
@@ -1436,7 +1445,7 @@ function ServerStatsCard({ state, selectedPair, onRetry }: {
           {state.retryable && onRetry && (
             <button
               onClick={onRetry}
-              className="px-3 py-1.5 rounded-full bg-[#42a5f5]/15 text-[#42a5f5] text-[11px] font-medium active:scale-95 transition-transform whitespace-nowrap"
+              className="px-3 py-1.5 rounded-full bg-[var(--c-info)]/15 text-[var(--c-info)] text-[11px] font-medium active:scale-95 transition-transform whitespace-nowrap"
             >
               Retry
             </button>
@@ -1481,11 +1490,11 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
             <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold",
               data.pair.includes('OTC') ? "bg-[#ff9800]/12 text-[#ffb74d]" :
               ['BTC','ETH'].some(c => data.pair.includes(c)) ? "bg-[#9c27b0]/12 text-[#ce93d8]" :
-              "bg-[#42a5f5]/12 text-[#64b5f6]"
+              "bg-[var(--c-info)]/12 text-[var(--c-info)]"
             )}>{data.pair.slice(0, 2)}</div>
             <div>
               <div className="text-[15px] font-semibold tracking-tight">{data.pair}</div>
-              <div className="text-[9px] text-[#6e6e73] uppercase tracking-[0.15em]">{data.assetType}</div>
+              <div className="text-[10px] text-[var(--t-low)] uppercase tracking-[0.15em]">{data.assetType}</div>
             </div>
           </button>
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{
@@ -1493,44 +1502,44 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
           }}>
             <div className={cn("w-1.5 h-1.5 rounded-full", data.marketStatus === 'OPEN' ? "bg-[#00e676]" : "bg-[#ff5252]")}
               style={data.marketStatus === 'OPEN' ? { boxShadow: '0 0 6px #00e676', animation: 'pulse 2s infinite' } : {}} />
-            <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: data.marketStatus === 'OPEN' ? '#00e676' : '#ff5252' }}>{data.marketStatus}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: data.marketStatus === 'OPEN' ? '#00e676' : '#ff5252' }}>{data.marketStatus}</span>
           </div>
         </div>
 
         {/* ── HERO: Direction + Confidence ── */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex-1">
-            <div className="text-[9px] uppercase tracking-[0.25em] text-[#6e6e73] mb-1">Signal Direction</div>
+            <div className="label-caption mb-1">Signal Direction</div>
             <div className="text-[44px] font-extrabold leading-none tracking-tight mb-2" style={{ color: dirColor, textShadow: `0 0 24px ${dirColor}30` }}>
               {isBuy ? 'BUY' : isSell ? 'SELL' : 'WAIT'}
             </div>
             {/* Mode + Fill chips — always visible (defaults when worker omits) */}
             <div className="flex flex-wrap items-center gap-1.5 mb-2">
-              <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(179,157,219,0.12)', color: '#b39ddb' }}>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(var(--rgb-purple),0.12)', color: '#b39ddb' }}>
                 {data.signal.mode === 'fx' ? '💹 FX' : data.signal.mode === 'both' ? '🔄 BOTH' : '⏱ FTT'}
               </span>
               {data.signal.fillStatus === 'INSTANT' && (
-                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(0,230,118,0.12)', color: '#00e676' }}>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(0,230,118,0.12)', color: '#00e676' }}>
                   ⚡ INSTANT — take now
                 </span>
               )}
               {data.signal.fillStatus === 'PENDING_ENTRY' && (
-                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,183,77,0.12)', color: '#ffb74d' }}>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(var(--rgb-warn),0.12)', color: '#ffb74d' }}>
                   ⏳ PENDING{data.signal.entryDistancePct != null ? ` (${data.signal.entryDistancePct.toFixed(3)}%)` : ''}
                 </span>
               )}
               {!data.signal.fillStatus && (
-                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.06)', color: '#8e9099' }}>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.06)', color: '#8e9099' }}>
                   fill — not yet resolved
                 </span>
               )}
               {data.signal.fxLevels?.sl != null && (
-                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,82,82,0.12)', color: '#ff5252' }}>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,82,82,0.12)', color: '#ff5252' }}>
                   SL {data.signal.fxLevels.sl}
                 </span>
               )}
               {data.signal.fxLevels?.tp != null && (
-                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(0,230,118,0.12)', color: '#00e676' }}>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(0,230,118,0.12)', color: '#00e676' }}>
                   TP {data.signal.fxLevels.tp} (1:{data.signal.fxLevels.rr ?? 2.5})
                 </span>
               )}
@@ -1540,13 +1549,13 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{
                   background: data.signal.grade.grade === 'A+' ? 'rgba(0,230,118,0.12)' :
                     data.signal.grade.grade === 'A' ? 'rgba(76,175,80,0.12)' :
-                    data.signal.grade.grade === 'B' ? 'rgba(66,165,245,0.12)' : 'rgba(255,183,77,0.12)',
+                    data.signal.grade.grade === 'B' ? 'rgba(var(--rgb-info),0.12)' : 'rgba(var(--rgb-warn),0.12)',
                   color: data.signal.grade.grade === 'A+' ? '#00e676' :
-                    data.signal.grade.grade === 'A' ? '#4caf50' :
-                    data.signal.grade.grade === 'B' ? '#42a5f5' : '#ffb74d',
+                    data.signal.grade.grade === 'A' ? 'var(--c-buy)' :
+                    data.signal.grade.grade === 'B' ? 'var(--c-info)' : '#ffb74d',
                 }}>{data.signal.grade.grade} · {data.signal.grade.label}</span>
               )}
-              {best?.timeframe && <span className="text-[9px] text-[#6e6e73] font-medium uppercase">{best.timeframe}</span>}
+              {best?.timeframe && <span className="text-[10px] text-[var(--t-low)] font-medium uppercase">{best.timeframe}</span>}
             </div>
           </div>
 
@@ -1561,7 +1570,7 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <span className="text-[26px] font-bold number-tabular leading-none" style={{ color: dirColor }}>{confidenceNum}</span>
-              <span className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mt-0.5">confidence</span>
+              <span className="label-caption mt-0.5">confidence</span>
             </div>
           </div>
         </div>
@@ -1570,15 +1579,15 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
         {!isNoTrade && (
           <div className="grid grid-cols-3 gap-2 mb-4">
             <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.02)' }}>
-              <div className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mb-1">Entry Price</div>
+              <div className="label-caption mb-1">Entry Price</div>
               <div className="text-[13px] font-bold number-tabular">{entryPrice?.toLocaleString() ?? '—'}</div>
             </div>
             <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.02)' }}>
-              <div className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mb-1">Expiry</div>
+              <div className="label-caption mb-1">Expiry</div>
               <div className="text-[13px] font-bold">{expiryLabel}</div>
             </div>
             <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.02)' }}>
-              <div className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mb-1">Candle Close</div>
+              <div className="label-caption mb-1">Candle Close</div>
               <div className="text-[13px] font-bold number-tabular">{cdLabel || '—'}</div>
             </div>
           </div>
@@ -1588,35 +1597,35 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
         <div className="flex items-center gap-4 mb-4 pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
           {data.signal.higherTFTrend && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[8px] uppercase tracking-wider text-[#6e6e73]">HTF 15m</span>
+              <span className="label-caption">HTF 15m</span>
               <span className="text-xs font-bold" style={{ color: data.signal.higherTFTrend === 'BUY' ? '#00e676' : data.signal.higherTFTrend === 'SELL' ? '#ff5252' : '#9e9e9e' }}>{data.signal.higherTFTrend}</span>
             </div>
           )}
           {data.signal.marketRegime && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[8px] uppercase tracking-wider text-[#6e6e73]">Regime</span>
+              <span className="label-caption">Regime</span>
               <span className="text-xs font-medium text-[#b0b3b8]">{data.signal.marketRegime}</span>
             </div>
           )}
-          {data.signal.regimeAdvice && <span className="text-[10px] text-[#6e6e73] truncate flex-1">{data.signal.regimeAdvice}</span>}
+          {data.signal.regimeAdvice && <span className="text-[10px] text-[var(--t-low)] truncate flex-1">{data.signal.regimeAdvice}</span>}
         </div>
 
         {/* ── Diagnostic Badges ── */}
         <div className="flex items-center gap-1.5 flex-wrap mb-3">
           {typeof coreConfidence === 'number' && Math.abs(coreConfidence - confidenceNum) >= 5 && (
-            <span className="text-[9px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(149,117,205,0.1)', color: '#b39ddb' }}>Core {coreConfidence}%</span>
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(var(--rgb-purple),0.1)', color: '#b39ddb' }}>Core {coreConfidence}%</span>
           )}
           {structureOverall && structureOverall !== 'N/A' && (
-            <span className="text-[9px] font-medium px-2 py-0.5 rounded-md" style={{
-              background: structureOverall === 'ALIGNED' ? 'rgba(0,230,118,0.08)' : structureOverall === 'AGAINST' ? 'rgba(255,82,82,0.08)' : 'rgba(255,183,77,0.08)',
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-md" style={{
+              background: structureOverall === 'ALIGNED' ? 'rgba(0,230,118,0.08)' : structureOverall === 'AGAINST' ? 'rgba(255,82,82,0.08)' : 'rgba(var(--rgb-warn),0.08)',
               color: structureOverall === 'ALIGNED' ? '#00e676' : structureOverall === 'AGAINST' ? '#ff5252' : '#ffb74d',
             }}>Struct: {structureOverall}</span>
           )}
           {aiBadge && (
-            <span className="text-[9px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.03)', color: '#b0b3b8' }}>{aiBadge.label}</span>
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.03)', color: '#b0b3b8' }}>{aiBadge.label}</span>
           )}
           {data.entrySource && (
-            <span className="text-[9px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.03)', color: '#6e6e73' }}>{ENTRY_SOURCE_LABEL[data.entrySource] || data.entrySource}</span>
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.03)', color: '#6e6e73' }}>{ENTRY_SOURCE_LABEL[data.entrySource] || data.entrySource}</span>
           )}
         </div>
 
@@ -1637,15 +1646,15 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
 function TimeframeCard({ tf, rec }: { tf: string; rec: TimeframeRec }) {
   const isBuy = rec.direction === 'BUY';
   const isSell = rec.direction === 'SELL';
-  const color = isBuy ? '#81c784' : isSell ? '#ef5350' : '#bdbdbd';
+  const color = isBuy ? 'var(--c-buy)' : isSell ? 'var(--c-sell)' : '#9e9e9e';
   const upPercent = rec.score.up + rec.score.down > 0 ? (rec.score.up / (rec.score.up + rec.score.down)) * 100 : 50;
 
   return (
     <div className="premium-card p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
-          <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", isBuy ? "bg-[#81c784]/15" : isSell ? "bg-[#ef5350]/15" : "bg-[#bdbdbd]/15")}>
-            {isBuy ? <ArrowUp className="w-5 h-5 text-[#81c784]" /> : isSell ? <ArrowDown className="w-5 h-5 text-[#ef5350]" /> : <Minus className="w-5 h-5 text-[#bdbdbd]" />}
+          <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", isBuy ? "bg-[var(--c-buy)]/15" : isSell ? "bg-[var(--c-sell)]/15" : "bg-[#9e9e9e]/15")}>
+            {isBuy ? <ArrowUp className="w-5 h-5 text-[var(--c-buy)]" /> : isSell ? <ArrowDown className="w-5 h-5 text-[var(--c-sell)]" /> : <Minus className="w-5 h-5 text-[#9e9e9e]" />}
           </div>
           <div>
             <div className="font-medium">{tf.toUpperCase()}</div>
@@ -1659,19 +1668,19 @@ function TimeframeCard({ tf, rec }: { tf: string; rec: TimeframeRec }) {
       </div>
       <div className="mb-3">
         <div className="flex items-center justify-between text-xs mb-1.5">
-          <span className="text-[#81c784] font-medium">▲ {rec.score.up.toFixed(1)}</span>
+          <span className="text-[var(--c-buy)] font-medium">▲ {rec.score.up.toFixed(1)}</span>
           <span className="text-[#b0b3b8]">DIFF {rec.score.diff.toFixed(1)}</span>
-          <span className="text-[#ef5350] font-medium">▼ {rec.score.down.toFixed(1)}</span>
+          <span className="text-[var(--c-sell)] font-medium">▼ {rec.score.down.toFixed(1)}</span>
         </div>
         <div className="h-1.5 bg-[#27272d] rounded-full overflow-hidden flex">
-          <div className="bg-[#81c784] transition-all duration-500" style={{ width: `${upPercent}%` }} />
-          <div className="bg-[#ef5350] transition-all duration-500" style={{ width: `${100 - upPercent}%` }} />
+          <div className="bg-[var(--c-buy)] transition-all duration-500" style={{ width: `${upPercent}%` }} />
+          <div className="bg-[var(--c-sell)] transition-all duration-500" style={{ width: `${100 - upPercent}%` }} />
         </div>
       </div>
       {rec.entry && (
         <div className="grid grid-cols-2 gap-2 pt-3 border-t border-[#3a3a3e]">
           <div><div className="text-xs text-[#b0b3b8]">Entry</div><div className="text-sm font-medium number-tabular">{rec.entry.price}</div></div>
-          <div><div className="text-xs text-[#b0b3b8]">Candle</div><div className={cn("text-sm font-medium", rec.entry.candleDirection === 'BULLISH' ? "text-[#81c784]" : "text-[#ef5350]")}>{rec.entry.candleDirection}</div></div>
+          <div><div className="text-xs text-[#b0b3b8]">Candle</div><div className={cn("text-sm font-medium", rec.entry.candleDirection === 'BULLISH' ? "text-[var(--c-buy)]" : "text-[var(--c-sell)]")}>{rec.entry.candleDirection}</div></div>
         </div>
       )}
     </div>
@@ -1687,14 +1696,14 @@ function IndicatorGrid({ recommendations, timeframeAnalysis, selectedTF, onSelec
     <div className="space-y-3">
       <div className="md-surface p-1 flex gap-1">
         {Object.keys(recommendations).map(tf => (
-          <button key={tf} onClick={() => onSelectTF(tf)} className={cn("flex-1 py-2 text-xs font-medium rounded-xl transition-all", selectedTF === tf ? "bg-[#42a5f5]/20 text-[#42a5f5]" : "text-[#b0b3b8]")}>{tf.toUpperCase()}</button>
+          <button key={tf} onClick={() => onSelectTF(tf)} className={cn("flex-1 py-2 text-xs font-medium rounded-xl transition-all", selectedTF === tf ? "bg-[var(--c-info)]/20 text-[var(--c-info)]" : "text-[#b0b3b8]")}>{tf.toUpperCase()}</button>
         ))}
       </div>
 
       {indicators && (
         <>
           <div className="premium-card p-4">
-            <div className="flex items-center gap-2 mb-3"><Gauge className="w-4 h-4 text-[#42a5f5]" /><span className="text-sm font-medium">Momentum</span></div>
+            <div className="flex items-center gap-2 mb-3"><Gauge className="w-4 h-4 text-[var(--c-info)]" /><span className="text-sm font-medium">Momentum</span></div>
             <div className="space-y-3">
               <GaugeBar label="RSI" value={parseFloat(indicators.rsi)} />
               <GaugeBar label="Stoch K" value={parseFloat(indicators.stochK)} />
@@ -1703,13 +1712,13 @@ function IndicatorGrid({ recommendations, timeframeAnalysis, selectedTF, onSelec
           </div>
 
           <div className="premium-card p-4">
-            <div className="flex items-center gap-2 mb-3"><TrendIcon className="w-4 h-4 text-[#81c784]" /><span className="text-sm font-medium">Trend (EMA)</span></div>
+            <div className="flex items-center gap-2 mb-3"><TrendIcon className="w-4 h-4 text-[var(--c-buy)]" /><span className="text-sm font-medium">Trend (EMA)</span></div>
             <div className="grid grid-cols-3 gap-2 mb-3">
               <MiniStat label="EMA 5" value={indicators.ema5} />
               <MiniStat label="EMA 13" value={indicators.ema13} />
               <MiniStat label="EMA 55" value={indicators.ema55} />
             </div>
-            <div className={cn("px-3 py-2 rounded-lg text-center text-xs font-medium", indicators.emaAlignment === 'FULL_BULL_STACK' ? "bg-[#81c784]/15 text-[#81c784]" : indicators.emaAlignment === 'FULL_BEAR_STACK' ? "bg-[#ef5350]/15 text-[#ef5350]" : "bg-[#27272d] text-[#b0b3b8]")}>{indicators.emaAlignment?.replace(/_/g, ' ')}</div>
+            <div className={cn("px-3 py-2 rounded-lg text-center text-xs font-medium", indicators.emaAlignment === 'FULL_BULL_STACK' ? "bg-[var(--c-buy)]/15 text-[var(--c-buy)]" : indicators.emaAlignment === 'FULL_BEAR_STACK' ? "bg-[var(--c-sell)]/15 text-[var(--c-sell)]" : "bg-[#27272d] text-[#b0b3b8]")}>{indicators.emaAlignment?.replace(/_/g, ' ')}</div>
           </div>
 
           <div className="premium-card p-4">
@@ -1717,16 +1726,16 @@ function IndicatorGrid({ recommendations, timeframeAnalysis, selectedTF, onSelec
             <div className="grid grid-cols-3 gap-2">
               <MiniStat label="Line" value={indicators.macdLine} />
               <MiniStat label="Signal" value={indicators.macdSignal} />
-              <MiniStat label="Hist" value={indicators.macdHist} color={parseFloat(indicators.macdHist) > 0 ? '#81c784' : '#ef5350'} />
+              <MiniStat label="Hist" value={indicators.macdHist} color={parseFloat(indicators.macdHist) > 0 ? 'var(--c-buy)' : 'var(--c-sell)'} />
             </div>
           </div>
 
           <div className="premium-card p-4">
             <div className="flex items-center gap-2 mb-3"><Zap className="w-4 h-4 text-[#ffb74d]" /><span className="text-sm font-medium">ADX</span></div>
             <div className="grid grid-cols-3 gap-2">
-              <MiniStat label="ADX" value={indicators.adx} color={parseFloat(indicators.adx) > 25 ? '#81c784' : '#bdbdbd'} />
-              <MiniStat label="+DI" value={indicators.plusDI} color="#81c784" />
-              <MiniStat label="-DI" value={indicators.minusDI} color="#ef5350" />
+              <MiniStat label="ADX" value={indicators.adx} color={parseFloat(indicators.adx) > 25 ? 'var(--c-buy)' : '#9e9e9e'} />
+              <MiniStat label="+DI" value={indicators.plusDI} color="var(--c-buy)" />
+              <MiniStat label="-DI" value={indicators.minusDI} color="var(--c-sell)" />
             </div>
           </div>
         </>
@@ -1743,10 +1752,10 @@ function GaugeBar({ label, value }: { label: string; value: number }) {
     <div>
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs text-[#b0b3b8]">{label}</span>
-        <span className={cn("text-xs font-medium number-tabular", isOverbought ? "text-[#ef5350]" : isOversold ? "text-[#81c784]" : "text-[#e3e2e6]")}>{value.toFixed(2)}</span>
+        <span className={cn("text-xs font-medium number-tabular", isOverbought ? "text-[var(--c-sell)]" : isOversold ? "text-[var(--c-buy)]" : "text-[#e3e2e6]")}>{value.toFixed(2)}</span>
       </div>
       <div className="h-1.5 bg-[#27272d] rounded-full overflow-hidden">
-        <div className={cn("h-full rounded-full", isOverbought ? "bg-[#ef5350]" : isOversold ? "bg-[#81c784]" : "bg-[#42a5f5]")} style={{ width: `${Math.min(100, value)}%` }} />
+        <div className={cn("h-full rounded-full", isOverbought ? "bg-[var(--c-sell)]" : isOversold ? "bg-[var(--c-buy)]" : "bg-[var(--c-info)]")} style={{ width: `${Math.min(100, value)}%` }} />
       </div>
     </div>
   );
@@ -1755,7 +1764,7 @@ function GaugeBar({ label, value }: { label: string; value: number }) {
 function MiniStat({ label, value, color }: { label: string; value: string | number; color?: string }) {
   return (
     <div className="bg-[#27272d] rounded-lg p-2">
-      <div className="text-[9px] text-[#b0b3b8] uppercase">{label}</div>
+      <div className="text-[10px] text-[#b0b3b8] uppercase">{label}</div>
       <div className="font-medium text-xs number-tabular" style={{ color: color || '#e3e2e6' }}>{value}</div>
     </div>
   );
@@ -1777,7 +1786,7 @@ function HistoryRow({ entry, onReport, onDelete, onDetail }: { entry: HistoryEnt
   const cancelPress = () => { setPressing(false); if (pressTimer.current) clearTimeout(pressTimer.current); };
 
   const resultColor = entry.result === 'WIN' ? '#00e676' : entry.result === 'LOSS' ? '#ff5252' : '#ffb74d';
-  const resultBg = entry.result === 'WIN' ? 'rgba(0,230,118,0.04)' : entry.result === 'LOSS' ? 'rgba(255,82,82,0.04)' : 'rgba(255,183,77,0.03)';
+  const resultBg = entry.result === 'WIN' ? 'rgba(0,230,118,0.04)' : entry.result === 'LOSS' ? 'rgba(255,82,82,0.04)' : 'rgba(var(--rgb-warn),0.03)';
   const resultLabel = entry.result === 'WIN' ? '✅ WIN' : entry.result === 'LOSS' ? '❌ LOSS' : '⏳';
   const dirColor = isBuy ? '#00e676' : '#ff5252';
 
@@ -1809,17 +1818,17 @@ function HistoryRow({ entry, onReport, onDelete, onDetail }: { entry: HistoryEnt
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[13px] font-bold">{entry.pair}</span>
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: `${dirColor}12`, color: dirColor }}>{entry.direction}</span>
-            {entry.grade && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: '#b0b3b8' }}>{entry.grade}</span>}
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: `${dirColor}12`, color: dirColor }}>{entry.direction}</span>
+            {entry.grade && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: '#b0b3b8' }}>{entry.grade}</span>}
           </div>
         </div>
         <span className="text-[10px] font-bold px-2 py-1 rounded-lg" style={{ background: `${resultColor}12`, color: resultColor }}>
-          {resultLabel}{entry.autoChecked && entry.result ? <span className="text-[7px] opacity-60 ml-0.5">auto</span> : ''}
+          {resultLabel}{entry.autoChecked && entry.result ? <span className="text-[8px] opacity-60 ml-0.5">auto</span> : ''}
         </span>
       </div>
 
       {/* Row 2: data line */}
-      <div className="flex items-center gap-3 text-[10px] text-[#6e6e73] flex-wrap">
+      <div className="flex items-center gap-3 text-[10px] text-[var(--t-low)] flex-wrap">
         {entry.entryPrice > 0 && <span className="number-tabular font-medium text-[#b0b3b8]">{entry.entryPrice.toLocaleString()}</span>}
         <span>{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
         <span className="number-tabular">{entry.confidence}</span>
@@ -1831,16 +1840,16 @@ function HistoryRow({ entry, onReport, onDelete, onDetail }: { entry: HistoryEnt
       {(entry.structureVerdict || entry.aiStatus || typeof entry.coreConfidence === 'number') && (
         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
           {entry.structureVerdict && entry.structureVerdict !== 'N/A' && (
-            <span className="text-[8px] font-medium px-1.5 py-0.5 rounded" style={{
-              background: entry.structureVerdict === 'ALIGNED' ? 'rgba(0,230,118,0.08)' : entry.structureVerdict === 'AGAINST' ? 'rgba(255,82,82,0.08)' : 'rgba(255,183,77,0.08)',
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{
+              background: entry.structureVerdict === 'ALIGNED' ? 'rgba(0,230,118,0.08)' : entry.structureVerdict === 'AGAINST' ? 'rgba(255,82,82,0.08)' : 'rgba(var(--rgb-warn),0.08)',
               color: entry.structureVerdict === 'ALIGNED' ? '#00e676' : entry.structureVerdict === 'AGAINST' ? '#ff5252' : '#ffb74d',
             }}>{entry.structureVerdict}</span>
           )}
           {entry.aiStatus && entry.aiStatus !== 'SKIPPED' && (
-            <span className="text-[8px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.03)', color: '#8e9099' }}>AI: {entry.aiStatus}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.03)', color: '#8e9099' }}>AI: {entry.aiStatus}</span>
           )}
           {typeof entry.coreConfidence === 'number' && (
-            <span className="text-[8px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(149,117,205,0.1)', color: '#b39ddb' }}>Core {entry.coreConfidence}%</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(var(--rgb-purple),0.1)', color: '#b39ddb' }}>Core {entry.coreConfidence}%</span>
           )}
         </div>
       )}
@@ -1848,7 +1857,7 @@ function HistoryRow({ entry, onReport, onDelete, onDetail }: { entry: HistoryEnt
       {/* Exit price */}
       {entry.exitPrice && entry.exitPrice > 0 && (
         <div className="mt-1.5 text-[10px] flex items-center gap-2">
-          <span className="text-[#6e6e73]">Exit:</span>
+          <span className="text-[var(--t-low)]">Exit:</span>
           <span className="number-tabular font-medium" style={{ color: resultColor }}>{entry.exitPrice.toLocaleString()}</span>
         </div>
       )}
@@ -1868,7 +1877,7 @@ function HistoryRow({ entry, onReport, onDelete, onDetail }: { entry: HistoryEnt
 function StatCard({ label, value, color }: { label: string; value: number | string; color: string }) {
   return (
     <div className="rounded-2xl p-3 text-center" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.04)' }}>
-      <div className="text-[8px] uppercase tracking-[0.15em] text-[#6e6e73] mb-1.5 font-medium">{label}</div>
+      <div className="label-caption mb-1.5">{label}</div>
       <div className="text-xl font-bold number-tabular" style={{ color, textShadow: `0 0 8px ${color}30` }}>{value}</div>
     </div>
   );
@@ -1881,11 +1890,11 @@ function SettingRow({ icon: Icon, iconColor, label, description, value, toggle, 
       </div>
       <div className="flex-1">
         <div className="text-[13px] font-semibold">{label}</div>
-        {description && <div className="text-[11px] text-[#6e6e73]">{description}</div>}
+        {description && <div className="text-[11px] text-[var(--t-low)]">{description}</div>}
       </div>
       {value && <span className="text-[#8e9099] text-xs font-medium">{value}</span>}
       {toggle && (
-        <button onClick={(e) => { e.stopPropagation(); onToggle?.(); }} className="relative w-11 h-6 rounded-full transition-all active:scale-90" style={{
+        <button onClick={(e) => { e.stopPropagation(); onToggle?.(); }} className="relative w-11 h-6 rounded-full transition-all active:scale-95" style={{
           background: toggleValue ? '#00e676' : 'rgba(255,255,255,0.08)',
           boxShadow: toggleValue ? '0 0 8px rgba(0,230,118,0.3)' : 'none',
         }}>
@@ -1897,13 +1906,13 @@ function SettingRow({ icon: Icon, iconColor, label, description, value, toggle, 
 }
 function NavButton({ icon: Icon, label, active, onClick, badge }: { icon: any; label: string; active: boolean; onClick: () => void; badge?: number }) {
   return (
-    <button onClick={onClick} className={cn("flex flex-col items-center gap-0.5 px-3 py-1.5 active:scale-90 transition-transform relative", active ? "text-[#4dd0e1]" : "text-[#6e6e73]")} style={active ? { filter: 'drop-shadow(0 0 4px rgba(77,208,225,0.3))' } : {}}>
+    <button onClick={onClick} className={cn("flex flex-col items-center gap-0.5 px-3 py-1.5 active:scale-95 transition-transform relative", active ? "text-[#4dd0e1]" : "text-[var(--t-low)]")} style={active ? { filter: 'drop-shadow(0 0 4px rgba(var(--rgb-accent),0.3))' } : {}}>
       {active && <div className="absolute -top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full" style={{ background: '#4dd0e1', boxShadow: '0 0 6px #4dd0e1' }} />}
       <Icon className="w-[22px] h-[22px]" strokeWidth={active ? 2.5 : 1.8} />
-      <span className="text-[9px] font-medium tracking-wide">{label}</span>
+      <span className="text-[10px] font-medium tracking-wide">{label}</span>
       {badge !== undefined && badge > 0 && (
         <div className="absolute top-0 right-1.5 min-w-[15px] h-[15px] px-1 rounded-full flex items-center justify-center" style={{ background: '#ff5252', boxShadow: '0 0 4px rgba(255,82,82,0.4)' }}>
-          <span className="text-[8px] text-white font-bold">{badge}</span>
+          <span className="text-[10px] text-white font-bold">{badge}</span>
         </div>
       )}
     </button>
