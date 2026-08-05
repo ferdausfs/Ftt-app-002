@@ -11,6 +11,7 @@ export interface HistoryEntry {
   timestamp: number;
   result?: 'WIN' | 'LOSS' | 'PENDING';
   grade?: string;
+  entryHit?: boolean;
 }
 
 interface Props {
@@ -148,6 +149,17 @@ function HistoryRow({ entry, isLast, onReport }: {
           <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-[#ff453a]/20">
             <XCircle className="w-3 h-3 text-[#ff453a]" />
             <span className="text-[10px] font-bold text-[#ff453a]">LOSS</span>
+          </div>
+        )}
+        {typeof entry.entryHit === 'boolean' && (
+          <div className={entry.entryHit
+            ? 'flex items-center gap-1 px-2 py-1 rounded-full bg-[#30d158]/15'
+            : 'flex items-center gap-1 px-2 py-1 rounded-full bg-[#ffb74d]/15'}>
+            <span className={entry.entryHit
+              ? 'text-[9px] font-bold text-[#30d158]'
+              : 'text-[9px] font-bold text-[#ffb74d]'}>
+              {entry.entryHit ? 'entry hit ✓' : 'entry miss ⚠'}
+            </span>
           </div>
         )}
       </div>

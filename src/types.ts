@@ -170,6 +170,8 @@ export interface SignalData {
     entryPrice?: number;
     currentPrice?: number;
     entryDistancePct?: number;
+    mode?: 'ftt' | 'fx' | 'both';
+    fxLevels?: { entry?: number; sl?: number; tp?: number; rr?: number };
     sessionWeight?: number;
     candleQuality?: number;
     method?: string;

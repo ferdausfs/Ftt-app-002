@@ -58,6 +58,7 @@ interface HistoryEntry {
   timestamp: number;
   result?: 'WIN' | 'LOSS' | 'PENDING';
   grade?: string;
+  entryHit?: boolean;
   // detail fields for history view
   gradeLabel?: string;
   structureDirection?: string;

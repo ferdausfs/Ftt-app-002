@@ -86,6 +86,7 @@ export interface WorkerHistoryRecord {
   aiStatus?: string;
   coreConfidence?: number;
   entrySource?: string;
+  entryHit?: boolean;
 }
 
 /**
@@ -103,6 +104,7 @@ export interface ReconcilableEntry {
   aiStatus?: string;
   coreConfidence?: number;
   entrySource?: string;
+  entryHit?: boolean;
 }
 
 /** Safely pull the rows out of an /api/history payload of unknown shape. */
@@ -150,6 +152,7 @@ export function reconcileHistory<T extends ReconcilableEntry>(
       aiStatus: entry.aiStatus ?? worker.aiStatus,
       coreConfidence: entry.coreConfidence ?? worker.coreConfidence,
       entrySource: entry.entrySource ?? worker.entrySource,
+      entryHit: entry.entryHit ?? worker.entryHit,
     } as T;
   });
 
