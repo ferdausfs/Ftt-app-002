@@ -110,6 +110,32 @@ export function SignalHero({ data, onPairClick }: Props) {
             </div>
           )}
 
+          {/* Mode + FX SL/TP chips */}
+          {(data.signal.mode || data.signal.fxLevels) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {data.signal.mode && (
+                <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#b39ddb]/15 text-[#b39ddb]">
+                  Mode: {data.signal.mode === 'fx' ? '💹 FX' : data.signal.mode === 'both' ? '🔄 BOTH' : '⏱ FTT'}
+                </span>
+              )}
+              {data.signal.fxLevels?.sl != null && (
+                <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#ff453a]/15 text-[#ff453a]">
+                  SL {data.signal.fxLevels.sl}
+                </span>
+              )}
+              {data.signal.fxLevels?.tp != null && (
+                <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#30d158]/15 text-[#30d158]">
+                  TP {data.signal.fxLevels.tp} (1:{data.signal.fxLevels.rr ?? 2.5})
+                </span>
+              )}
+              {data.signal.fxLevels?.entry != null && data.signal.fxLevels.entry !== data.signal.entryPrice && (
+                <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-white/10 text-white/70">
+                  FX entry {data.signal.fxLevels.entry}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Grade */}
           <div className="mt-4 flex items-center gap-2">
             <div className={cn(
