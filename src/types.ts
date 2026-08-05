@@ -164,6 +164,12 @@ export interface SignalData {
       multiplier: number;
     }>;
     structureVerdict?: StructureVerdict;
+    // Fill status (2026-08-05): INSTANT (price at entry, take now) or
+    // PENDING_ENTRY (price away — wait). Comes from engine.
+    fillStatus?: 'INSTANT' | 'PENDING_ENTRY';
+    entryPrice?: number;
+    currentPrice?: number;
+    entryDistancePct?: number;
     sessionWeight?: number;
     candleQuality?: number;
     method?: string;

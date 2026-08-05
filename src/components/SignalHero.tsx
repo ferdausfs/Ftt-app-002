@@ -94,6 +94,22 @@ export function SignalHero({ data, onPairClick }: Props) {
             Confidence Level
           </div>
 
+          {/* Fill status badge — INSTANT vs PENDING_ENTRY */}
+          {data.signal.fillStatus && (
+            <div className="mt-3">
+              <span className={
+                data.signal.fillStatus === 'INSTANT'
+                  ? 'text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#00e676]/15 text-[#00e676]'
+                  : 'text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#ffb74d]/15 text-[#ffb74d]'
+              }>
+                {data.signal.fillStatus === 'INSTANT' ? '⚡ INSTANT — price at entry' : '⏳ PENDING — price away from entry'}
+                {data.signal.entryDistancePct != null && data.signal.fillStatus === 'PENDING_ENTRY'
+                  ? ` (${data.signal.entryDistancePct.toFixed(3)}%)`
+                  : ''}
+              </span>
+            </div>
+          )}
+
           {/* Grade */}
           <div className="mt-4 flex items-center gap-2">
             <div className={cn(
