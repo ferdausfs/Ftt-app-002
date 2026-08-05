@@ -175,6 +175,9 @@ export default function App() {
     } catch { return []; }
   });
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [signalMode, setSignalMode] = useState<'ftt' | 'fx' | 'both'>(() => {
+    try { const m = localStorage.getItem('ftt_signal_mode'); return m === 'fx' || m === 'both' ? m : 'ftt'; } catch { return 'ftt'; }
+  });
   const [selectedIndicatorTF, setSelectedIndicatorTF] = useState('5min');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshCountdown, setRefreshCountdown] = useState(60);
@@ -228,7 +231,8 @@ export default function App() {
     const requestedPair = selectedPair;
     try {
       const cleanPair = requestedPair.replace('/', '').toLowerCase();
-      const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}`, { signal: controller.signal });
+      const modeParam = signalMode === 'fx' || signalMode === 'both' ? '&mode=fx' : '';
+      const response = await fetch(`${API_BASE}/api/signal?pair=${cleanPair}${modeParam}`, { signal: controller.signal });
       if (!response.ok) throw new Error('Network error');
       const data: SignalData = await response.json();
 
@@ -371,7 +375,7 @@ export default function App() {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [autoRefresh, fetchSignal]);
+  }, [autoRefresh, fetchSignal, signalMode]);
 
   const reportSignalResult = useCallback(async (id: string, result: 'WIN' | 'LOSS') => {
     const response = await fetch(`${API_BASE}/api/report?id=${encodeURIComponent(id)}&result=${result}`);
@@ -1135,6 +1139,23 @@ export default function App() {
                 toggle
                 toggleValue={autoRefresh}
                 onToggle={() => setAutoRefresh(!autoRefresh)}
+              />
+              <SettingRow
+                icon={Layers}
+                iconColor="#b39ddb"
+                label="Signal Mode"
+                description={signalMode === 'fx'
+                  ? 'FX — SL/TP (spot)'
+                  : signalMode === 'both'
+                    ? 'BOTH — SL/TP + expiry'
+                    : 'FTT — fixed-time'}
+                value={signalMode === 'fx' ? '💹 FX' : signalMode === 'both' ? '🔄 BOTH' : '⏱ FTT'}
+                isLast
+                onClick={() => {
+                  const next = signalMode === 'ftt' ? 'fx' : signalMode === 'fx' ? 'both' : 'ftt';
+                  setSignalMode(next);
+                  try { localStorage.setItem('ftt_signal_mode', next); } catch {}
+                }}
               />
             </div>
 
