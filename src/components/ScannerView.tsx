@@ -43,7 +43,7 @@ export function ScannerView({ onSignalClick }: Props) {
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(66,165,245,0.1)' }}>
-              <Radar className="w-4 h-4 text-[#64b5f6]" />
+              <Radar className="w-4 h-4 text-[var(--c-info)]" />
             </div>
             <div>
               <div className="text-sm font-medium">Live Scanner</div>
@@ -55,8 +55,9 @@ export function ScannerView({ onSignalClick }: Props) {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setEnabled(!enabled)}
+              aria-label={enabled ? 'Disable scanner notifications' : 'Enable scanner notifications'}
               className={cn(
-                "w-10 h-10 rounded-full flex items-center justify-center active:scale-90 transition-transform",
+                "w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-transform",
                 enabled ? "bg-[#00e676]/15 text-[#00e676]" : "bg-[rgba(255,255,255,0.04)] text-[#8e9099]"
               )}
             >
@@ -65,7 +66,8 @@ export function ScannerView({ onSignalClick }: Props) {
             <button
               onClick={() => { haptic('light'); scanAll(); }}
               disabled={scanning}
-              className="w-10 h-10 rounded-full flex items-center justify-center active:scale-90 transition-transform"
+              aria-label="Scan all pairs now"
+              className="w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-transform"
             >
               <RefreshCw className={cn("w-4 h-4", scanning && "animate-spin")} />
             </button>
@@ -74,7 +76,7 @@ export function ScannerView({ onSignalClick }: Props) {
 
         {enabled && (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full w-fit">
-            <div className={cn("w-2 h-2 rounded-full", scanning ? "bg-[#64b5f6] animate-pulse" : "bg-[#00e676] animate-pulse")} />
+            <div className={cn("w-2 h-2 rounded-full", scanning ? "bg-[var(--c-info)] animate-pulse" : "bg-[#00e676] animate-pulse")} />
             <span className="text-xs text-[#b0b3b8] font-medium number-tabular">
               {scanning ? 'Scanning…' : `Next scan in ${countdown}s`}
             </span>
@@ -88,12 +90,14 @@ export function ScannerView({ onSignalClick }: Props) {
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleAdd()}
             placeholder="e.g. EURUSD or EURUSD-OTC"
-            className="flex-1 rounded-xl px-3 py-2 text-sm text-[#e3e2e6] placeholder-[#8e9099] outline-none"
+            aria-label="Add scanner pair"
+            className="flex-1 rounded-xl px-3 py-2 text-sm text-[#e3e2e6] placeholder-[#8e9099] outline-none bg-white/[0.05] border border-white/[0.06] focus:bg-white/[0.08] transition-colors"
           />
           <button
             onClick={handleAdd}
             disabled={pairs.length >= 12}
-            className="w-10 h-10 rounded-xl bg-[#64b5f6]/15 text-[#64b5f6] flex items-center justify-center active:scale-90 transition-transform disabled:opacity-40"
+            aria-label="Add pair"
+            className="w-10 h-10 rounded-xl bg-[var(--c-info)]/15 text-[var(--c-info)] flex items-center justify-center active:scale-95 transition-transform disabled:opacity-40"
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -101,12 +105,12 @@ export function ScannerView({ onSignalClick }: Props) {
       </div>
 
       {/* Pair list */}
-      <div style={{ borderRadius: 20, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)' }} className="overflow-hidden">
+      <div className="surface-group">
         {pairs.length === 0 ? (
           <div className="p-10 text-center">
-            <Radar className="w-12 h-12 text-[rgba(255,255,255,0.04)] mx-auto mb-3" />
+            <Radar className="w-12 h-12 text-[#2a2a2f] mx-auto mb-3" />
             <p className="text-[#b0b3b8] font-medium mb-1">No pairs added</p>
-            <p className="text-[#8e9099] text-sm">Add 10–12 pairs to start scanning</p>
+            <p className="text-[#8e9099] text-sm">Add pairs to start scanning</p>
           </div>
         ) : (
           pairs.map((pair, idx) => {
@@ -163,7 +167,8 @@ export function ScannerView({ onSignalClick }: Props) {
                   )}
                   <button
                     onClick={(e) => { e.stopPropagation(); removePair(pair); }}
-                    className="w-7 h-7 rounded-full flex items-center justify-center active:scale-90 transition-transform"
+                    aria-label={`Remove ${pair} from scanner`}
+                    className="w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-transform"
                   >
                     <X className="w-3.5 h-3.5 text-[#8e9099]" />
                   </button>

@@ -39,23 +39,23 @@ export function CircuitBreakerCard({ pair, cooldownUntil, lossStreak, wouldBeSig
 
   return (
     <div className="space-y-3 fade-in">
-      <div className="md-surface-highest p-0 overflow-hidden scale-in border border-[#ffb400]/10">
-        <div className="h-1.5 w-full bg-gradient-to-r from-[#ffb400] via-[#ff9800] to-[#ef6c00]" />
+      <div className="md-surface-highest p-0 overflow-hidden scale-in border border-[var(--c-warn)]/10">
+        <div className="h-1.5 w-full bg-gradient-to-r from-[var(--c-warn)] via-[#ff9800] to-[#ef6c00]" />
         <div className="p-5">
           <div className="flex items-start justify-between gap-3 mb-5">
             <div className="flex items-start gap-4">
-              <div className="w-14 h-14 rounded-2xl bg-[#ffb400]/15 flex items-center justify-center shadow-lg shadow-[#ffb400]/5">
-                <Pause className="w-7 h-7 text-[#ffb400]" strokeWidth={2.4} />
+              <div className="w-14 h-14 rounded-2xl bg-[var(--c-warn)]/15 flex items-center justify-center shadow-lg shadow-[var(--c-warn)]/5">
+                <Pause className="w-7 h-7 text-[var(--c-warn)]" strokeWidth={2.4} />
               </div>
               <div>
-                <div className="text-xs uppercase tracking-wider text-[#ffb400] font-bold mb-1">Risk control</div>
+                <div className="text-xs uppercase tracking-wider text-[var(--c-warn)] font-bold mb-1">Risk control</div>
                 <h2 className="text-2xl font-medium leading-tight">Circuit Breaker Active</h2>
                 <p className="text-sm text-[#b0b3b8] mt-1 leading-relaxed">
                   {pair} is paused after {lossStreak ?? 2} consecutive losses.
                 </p>
               </div>
             </div>
-            <div className="px-3 py-1.5 rounded-full bg-[#27272d] text-[#ffb400] text-xs font-bold border border-[#ffb400]/20 whitespace-nowrap">
+            <div className="px-3 py-1.5 rounded-full bg-[#27272d] text-[var(--c-warn)] text-xs font-bold border border-[var(--c-warn)]/20 whitespace-nowrap">
               COOLDOWN
             </div>
           </div>
@@ -63,14 +63,14 @@ export function CircuitBreakerCard({ pair, cooldownUntil, lossStreak, wouldBeSig
           <div className="grid gap-3 mb-4">
             <div className="bg-[#1e1e23] rounded-2xl p-4 border border-[#3a3a3e]/60">
               <div className="flex items-center gap-2 text-xs text-[#b0b3b8] mb-2">
-                <Clock className="w-4 h-4 text-[#ffb400]" />
+                <Clock className="w-4 h-4 text-[var(--c-warn)]" />
                 <span>Trading resumes</span>
               </div>
               <div className="text-base font-medium text-[#e3e2e6] leading-snug">
                 {resumesAt ? resumesAt.toLocaleString() : 'Cooldown time unavailable'}
               </div>
-              <div className="inline-flex items-center gap-2 mt-3 px-3 py-1.5 rounded-full bg-[#ffb400]/10 text-[#ffb400] text-xs font-bold">
-                <div className="w-2 h-2 rounded-full bg-[#ffb400] animate-pulse" />
+              <div className="inline-flex items-center gap-2 mt-3 px-3 py-1.5 rounded-full bg-[var(--c-warn)]/10 text-[var(--c-warn)] text-xs font-bold">
+                <div className="w-2 h-2 rounded-full bg-[var(--c-warn)] animate-pulse" />
                 {remaining === 'refreshing…' ? 'Refreshing…' : `Resumes in ${remaining}`}
               </div>
             </div>
@@ -93,8 +93,8 @@ export function CircuitBreakerCard({ pair, cooldownUntil, lossStreak, wouldBeSig
                 <div className="flex items-center gap-2">
                   <span className={cn(
                     'text-base font-bold',
-                    wouldBeSignal === 'BUY' && 'text-[#81c784]',
-                    wouldBeSignal === 'SELL' && 'text-[#ef5350]',
+                    wouldBeSignal === 'BUY' && 'text-[var(--c-buy)]',
+                    wouldBeSignal === 'SELL' && 'text-[var(--c-sell)]',
                   )}>
                     {wouldBeSignal}
                   </span>

@@ -11,7 +11,7 @@ export function ConfidenceGauge({ value, size = 80 }: { value: number; size?: nu
   const radius = (size - 10) / 2;
   const circ = 2 * Math.PI * radius;
   const offset = circ - (pct / 100) * circ;
-  const color = pct >= 85 ? '#4dd0e1' : pct >= 70 ? '#81c784' : pct >= 60 ? '#ffb74d' : '#ef5350';
+  const color = pct >= 85 ? 'var(--c-accent)' : pct >= 70 ? 'var(--c-buy)' : pct >= 60 ? 'var(--c-warn)' : 'var(--c-sell)';
 
   return (
     <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
@@ -115,7 +115,7 @@ export function HistoryCard({ direction, result, pair, confidence, expiryMinutes
 }) {
   const cls = result === 'WIN' ? 'history-card-win' : result === 'LOSS' ? 'history-card-loss' : 'history-card-pending';
   const emoji = result === 'WIN' ? '✅' : result === 'LOSS' ? '❌' : '⏳';
-  const dirColor = direction === 'BUY' ? 'text-[#81c784]' : direction === 'SELL' ? 'text-[#ef5350]' : 'text-[#9e9e9e]';
+  const dirColor = direction === 'BUY' ? 'text-[var(--c-buy)]' : direction === 'SELL' ? 'text-[var(--c-sell)]' : 'text-[#9e9e9e]';
 
   return (
     <div className={cn('rounded-xl p-3 transition-all hover:scale-[1.01]', cls)}>

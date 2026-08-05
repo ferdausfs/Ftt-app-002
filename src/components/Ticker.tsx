@@ -85,7 +85,7 @@ export function Ticker() {
   };
 
   return (
-    <div style={{
+    <div className="ticker-fade" style={{
       borderTop: '1px solid rgba(255,255,255,0.05)',
       borderBottom: '1px solid rgba(255,255,255,0.05)',
       background: 'rgba(255,255,255,0.015)',
@@ -93,7 +93,7 @@ export function Ticker() {
     }}>
       <div className="ticker-track">
         {!loaded ? (
-          <span className="tick-item" style={{ padding: '9px 16px', fontSize: 11, color: '#8e9099' }}>Loading market pulse…</span>
+          <span style={{ padding: '9px 16px', fontSize: 11, color: '#8e9099', display: 'inline-flex', whiteSpace: 'nowrap' }}>Loading market pulse…</span>
         ) : (
           <>
             {rows.map((r, i) => item(r, `a-${i}`))}

@@ -1,5 +1,52 @@
 # AGENT_LOG
 
+## 2026-08-05 — Phase 7: Frontend design polish pass (consistency audit)
+
+### Scope
+- Design-only, no behavior changes. Base `c861382`. Backend untouched, nothing
+  deployed/pushed. 13 source/config files + 2 new verify files. +0.97 KB raw /
+  +0.19 KB gzip (tokens), inside the <5 KB budget culture.
+
+### Two structural discoveries (fixed before polishing)
+- **`index.html` was a stale 345 KB single-file build**, not the source entry —
+  the previous commit's `fillStatus` chips had 0 occurrences in it, so `npm run
+  dev` silently served an outdated app. Now a canonical 18-line Vite entry;
+  `npm run build` still emits the inlined single file to `dist/index.html`.
+- **`ios-card` / `ios-blur-strong` / `haptic-tap` were referenced by live
+  components but never defined** — the pair-picker sheet rendered with no
+  surface. Added `.sheet-surface`, `.ios-card`, `.haptic-tap`.
+
+### Changes
+- Semantic palette in `index.css :root`: `--c-buy #00e676`, `--c-sell #ff5252`,
+  `--c-warn #ffb74d`, `--c-info #42a5f5`, `--c-otc #ff9800`, `--c-accent
+  #4dd0e1`, `--c-purple #b39ddb`, `--t-*` text tiers, `--rgb-*` triplets.
+  All live screens migrated (~200 literals): the app previously used 4 greens,
+  4 reds and 3 blues for the same meanings.
+- Type floor: no label under 10 px; one `.label-caption` utility replaces the
+  scattered 8-9 px tracking combos. Contrast: meaningful labels #6e6e73 →
+  #8e9099.
+- Surfaces: `.surface-group` (lists), `.sheet-surface` (sheets), radius drift
+  converged (cards 20 px, tiles 16 px); ServerStatsCard → premium-card.
+- States: server-stats shimmer skeleton, visible empty-state icons, scanner
+  input affordance, honest "Add pairs" copy, hero skeleton radius 24 px.
+- Motion/a11y: press scale unified 0.95, `:focus-visible` ring, aria-labels on
+  icon-only buttons, `prefers-reduced-motion` extended, ticker edge fade,
+  Analysis tab empty header card → real section header.
+
+### Verification
+- `tsc` 0 errors · build pass · Phase 5 smoke 53/53 · Phase 6 smoke 79/79.
+- New `verify/design_render.mjs`: mounts the real app in jsdom with the real
+  compiled CSS (layers flattened) + mocked API; walks every tab and state
+  (hero, CB card, market-closed, analysis, history + detail modal, settings,
+  scanner, board, picker) with computed-style assertions for the tokens:
+  **51/51**. Dev-dep added: `jsdom` (test-only).
+
+### Open
+- Dead component files still carry the old palette; migrate if ever wired up.
+- Repo-root `index.html` is now the source entry; deploy pipelines should point
+  at `dist/index.html`.
+
+
 ## 2026-07-29 — Phase 6: Server Win Rate filters (pair scope + time range)
 
 ### Scope
