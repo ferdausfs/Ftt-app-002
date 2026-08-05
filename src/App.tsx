@@ -1504,36 +1504,37 @@ function MaterialSignalCard({ data, onPairClick }: { data: TradableSignalData; o
             <div className="text-[44px] font-extrabold leading-none tracking-tight mb-2" style={{ color: dirColor, textShadow: `0 0 24px ${dirColor}30` }}>
               {isBuy ? 'BUY' : isSell ? 'SELL' : 'WAIT'}
             </div>
-            {/* Mode + Fill + FX chips */}
-            {(data.signal.mode || data.signal.fillStatus || data.signal.fxLevels?.sl) && (
-              <div className="flex flex-wrap items-center gap-1.5 mb-2">
-                {data.signal.mode && (
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(179,157,219,0.12)', color: '#b39ddb' }}>
-                    {data.signal.mode === 'fx' ? '💹 FX' : data.signal.mode === 'both' ? '🔄 BOTH' : '⏱ FTT'}
-                  </span>
-                )}
-                {data.signal.fillStatus === 'INSTANT' && (
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(0,230,118,0.12)', color: '#00e676' }}>
-                    ⚡ INSTANT — take now
-                  </span>
-                )}
-                {data.signal.fillStatus === 'PENDING_ENTRY' && (
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,183,77,0.12)', color: '#ffb74d' }}>
-                    ⏳ PENDING{data.signal.entryDistancePct != null ? ` (${data.signal.entryDistancePct.toFixed(3)}%)` : ''}
-                  </span>
-                )}
-                {data.signal.fxLevels?.sl != null && (
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,82,82,0.12)', color: '#ff5252' }}>
-                    SL {data.signal.fxLevels.sl}
-                  </span>
-                )}
-                {data.signal.fxLevels?.tp != null && (
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(0,230,118,0.12)', color: '#00e676' }}>
-                    TP {data.signal.fxLevels.tp} (1:{data.signal.fxLevels.rr ?? 2.5})
-                  </span>
-                )}
-              </div>
-            )}
+            {/* Mode + Fill chips — always visible (defaults when worker omits) */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-2">
+              <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(179,157,219,0.12)', color: '#b39ddb' }}>
+                {data.signal.mode === 'fx' ? '💹 FX' : data.signal.mode === 'both' ? '🔄 BOTH' : '⏱ FTT'}
+              </span>
+              {data.signal.fillStatus === 'INSTANT' && (
+                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(0,230,118,0.12)', color: '#00e676' }}>
+                  ⚡ INSTANT — take now
+                </span>
+              )}
+              {data.signal.fillStatus === 'PENDING_ENTRY' && (
+                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,183,77,0.12)', color: '#ffb74d' }}>
+                  ⏳ PENDING{data.signal.entryDistancePct != null ? ` (${data.signal.entryDistancePct.toFixed(3)}%)` : ''}
+                </span>
+              )}
+              {!data.signal.fillStatus && (
+                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.06)', color: '#8e9099' }}>
+                  fill — not yet resolved
+                </span>
+              )}
+              {data.signal.fxLevels?.sl != null && (
+                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,82,82,0.12)', color: '#ff5252' }}>
+                  SL {data.signal.fxLevels.sl}
+                </span>
+              )}
+              {data.signal.fxLevels?.tp != null && (
+                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(0,230,118,0.12)', color: '#00e676' }}>
+                  TP {data.signal.fxLevels.tp} (1:{data.signal.fxLevels.rr ?? 2.5})
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               {data.signal.grade && (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{
