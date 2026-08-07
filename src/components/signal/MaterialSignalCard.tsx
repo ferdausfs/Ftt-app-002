@@ -76,12 +76,14 @@ export function MaterialSignalCard({ data, onPairClick }: MaterialSignalCardProp
               <SltpChip sl={data.signal.fxLevels?.sl} tp={data.signal.fxLevels?.tp} rr={data.signal.fxLevels?.rr} />
             </div>
             <div className="flex items-center gap-2">
-              {data.signal.grade && (
+              {data.signal.grade && !(data.signal.finalSignal === 'NO_TRADE') && (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{
-                  background: data.signal.grade.grade === 'A+' ? 'rgba(0,230,118,0.12)' :
+                  background: data.signal.grade.grade === 'N/A' ? 'rgba(120,130,140,0.12)' :
+                    data.signal.grade.grade === 'A+' ? 'rgba(0,230,118,0.12)' :
                     data.signal.grade.grade === 'A' ? 'rgba(76,175,80,0.12)' :
                     data.signal.grade.grade === 'B' ? 'rgba(var(--rgb-info),0.12)' : 'rgba(var(--rgb-warn),0.12)',
-                  color: data.signal.grade.grade === 'A+' ? '#00e676' :
+                  color: data.signal.grade.grade === 'N/A' ? '#8896a8' :
+                    data.signal.grade.grade === 'A+' ? '#00e676' :
                     data.signal.grade.grade === 'A' ? 'var(--c-buy)' :
                     data.signal.grade.grade === 'B' ? 'var(--c-info)' : '#ffb74d',
                 }}>{data.signal.grade.grade} · {data.signal.grade.label}</span>
